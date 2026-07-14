@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#F8F9FA</color>
+    <color name="block_bg">#0F0F1A</color>
+    <color name="purple_500">#6200EE</color>
+    <color name="purple_700">#3700B3</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="teal_200">#03DAC5</color>
+    <color name="text_primary">#1C1C1E</color>
+    <color name="text_secondary">#6B6B6B</color>
+    <color name="warning_surface">#FFF8E1</color>
+    <color name="warning_text">#F57C00</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="white_20">#33FFFFFF</color>
+    <color name="white_60">#99FFFFFF</color>
+    <string name="accessibility_service_description">Monitors which app is in the foreground so Focus Blocker can show the block screen when you open a restricted app.</string>
+    <string name="app_name">Focus Blocker</string>
+    <style name="Theme.BlockingApp" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/purple_500</item>
+        <item name="colorPrimaryVariant">@color/purple_700</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/teal_200</item>
+        <item name="android:statusBarColor">@color/surface_card</item>
+    </style>
+    <style name="Theme.BlockingApp.Block" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/block_bg</item>
+        <item name="android:statusBarColor">@color/block_bg</item>
+        <item name="android:navigationBarColor">@color/block_bg</item>
+        <item name="colorPrimary">@color/teal_200</item>
+        <item name="colorOnPrimary">@color/block_bg</item>
+    </style>
+</resources>

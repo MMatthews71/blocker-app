@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Being an *active* device admin is what makes Android refuse to uninstall the
+    app until admin is deactivated. We don't actually need any enforcement
+    policies, so the policy set is intentionally empty.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

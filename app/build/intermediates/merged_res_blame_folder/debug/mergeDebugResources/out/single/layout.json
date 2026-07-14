@@ -1,0 +1,22 @@
+[
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-mergeDebugResources-41:\\layout\\activity_main.xml",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\layout\\activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-mergeDebugResources-41:\\layout\\item_app.xml",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\layout\\item_app.xml"
+    },
+    {
+        "merged": "com.blockingapp-mergeDebugResources-41:/layout/activity_main.xml",
+        "source": "com.blockingapp-main-44:/layout/activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-mergeDebugResources-41:\\layout\\activity_block.xml",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\layout\\activity_block.xml"
+    },
+    {
+        "merged": "com.blockingapp-mergeDebugResources-41:/layout/item_app.xml",
+        "source": "com.blockingapp-main-44:/layout/item_app.xml"
+    }
+]

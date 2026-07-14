@@ -1,0 +1,46 @@
+[
+    {
+        "merged": "com.blockingapp-debug-42:/layout_activity_main.xml.flat",
+        "source": "com.blockingapp-main-44:/layout/activity_main.xml"
+    },
+    {
+        "merged": "com.blockingapp-debug-42:/layout_item_app.xml.flat",
+        "source": "com.blockingapp-main-44:/layout/item_app.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\mipmap-anydpi-v26\\ic_launcher_round.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\drawable_ic_block.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\drawable\\ic_block.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\layout_activity_block.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\layout\\activity_block.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\layout_item_app.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\layout\\item_app.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\mipmap-anydpi-v26\\ic_launcher.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\drawable_ic_launcher_foreground.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\drawable\\ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\xml_device_admin.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\xml\\device_admin.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\xml_accessibility_service_config.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\xml\\accessibility_service_config.xml"
+    },
+    {
+        "merged": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-debug-42:\\layout_activity_main.xml.flat",
+        "source": "C:\\Users\\maxma\\.gradle\\daemon\\8.7\\com.blockingapp-main-44:\\layout\\activity_main.xml"
+    }
+]

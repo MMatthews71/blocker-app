@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFFFF</color>
+    <color name="white_60">#99FFFFFF</color>
+    <color name="white_20">#33FFFFFF</color>
+
+    <color name="background">#F8F9FA</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="warning_surface">#FFF8E1</color>
+    <color name="warning_text">#F57C00</color>
+    <color name="text_primary">#1C1C1E</color>
+    <color name="text_secondary">#6B6B6B</color>
+
+    <!-- Block screen dark background -->
+    <color name="block_bg">#0F0F1A</color>
+
+    <!-- Primary / accent -->
+    <color name="purple_500">#6200EE</color>
+    <color name="purple_700">#3700B3</color>
+    <color name="teal_200">#03DAC5</color>
+</resources>
