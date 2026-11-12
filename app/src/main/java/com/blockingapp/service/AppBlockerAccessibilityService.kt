@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.blockingapp.BlockerRepository
 import com.blockingapp.FocusApp
 import com.blockingapp.R
+import com.blockingapp.TrustedClock
 import com.blockingapp.UninstallGate
 import com.blockingapp.ui.BlockActivity
 import java.text.SimpleDateFormat
@@ -222,7 +223,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     private fun isOnBreakFast(): Boolean =
-        System.currentTimeMillis() < inMemoryBreakEndsAt
+        TrustedClock.now(this) < inMemoryBreakEndsAt
 
     private fun launchBlockActivity() {
         val intent = Intent(this, BlockActivity::class.java).apply {
@@ -236,7 +237,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         inMemoryBreakEndsAt = breakEndsAt
 
         // When the break expires, re-check whatever is in the foreground.
-        val delay = breakEndsAt - System.currentTimeMillis()
+        val delay = breakEndsAt - TrustedClock.now(this)
         mainHandler.removeCallbacksAndMessages(BREAK_END_TOKEN)
         mainHandler.postAtTime({
             val pkg = lastForegroundPackage ?: return@postAtTime

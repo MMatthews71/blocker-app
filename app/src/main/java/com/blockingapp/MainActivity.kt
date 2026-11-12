@@ -278,7 +278,7 @@ class MainActivity : AppCompatActivity() {
                 primary.setOnClickListener { confirmRequestUninstall() }
             }
             UninstallGate.State.PENDING -> {
-                val remaining = UninstallGate.unlockAt(this) - System.currentTimeMillis()
+                val remaining = UninstallGate.unlockAt(this) - TrustedClock.now(this)
                 title.text = "Uninstall unlocks soon"
                 body.text = "Unlocks in ${formatDuration(remaining)}. " +
                     "You can cancel and stay protected."
@@ -289,7 +289,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             UninstallGate.State.OPEN -> {
-                val remaining = UninstallGate.unlockAt(this) + UninstallGate.WINDOW_MS - System.currentTimeMillis()
+                val remaining = UninstallGate.unlockAt(this) + UninstallGate.WINDOW_MS - TrustedClock.now(this)
                 title.text = "Uninstall unlocked"
                 body.text = "You can remove the app for the next ${formatDuration(remaining)}, " +
                     "then protection re-locks."
