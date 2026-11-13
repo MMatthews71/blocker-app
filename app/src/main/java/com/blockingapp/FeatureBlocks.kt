@@ -58,7 +58,12 @@ object FeatureBlocks {
         /** The choice offered when adding the app in Focus Blocker. */
         val optionLabel: String,
         /** What the app list shows for this restriction, e.g. "Discover & Spotlight blocked". */
-        val summary: String
+        val summary: String,
+        /**
+         * Buttons to hide: while one is on screen, a solid patch is drawn over it
+         * that also swallows taps, so the button is effectively gone.
+         */
+        val covers: List<ScreenFinder> = emptyList()
     ) {
         /** Short name for dialogs and the app list, e.g. "Discover & Spotlight". */
         val name: String get() = sections.joinToString(" & ") { it.name }
@@ -83,7 +88,10 @@ object FeatureBlocks {
             Section("Spotlight", first { it.text == "spotlight" })
         ),
         optionLabel = "Block Discover & Spotlight only (rest of app works)",
-        summary = "🚫 Discover & Spotlight blocked · rest of app works"
+        summary = "🚫 Discover & Spotlight blocked · Spotlight tab hidden",
+        // The Spotlight button in the bottom bar: "Spotlight" only as its
+        // description (the Spotlight page's title has it as text instead).
+        covers = listOf(first { it.desc == "spotlight" && it.text.isNullOrEmpty() && it.clickable })
     )
 
     // ---- Instagram --------------------------------------------------------
