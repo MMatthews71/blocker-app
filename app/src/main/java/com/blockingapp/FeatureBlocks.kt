@@ -152,8 +152,9 @@ object FeatureBlocks {
                 detect = instagramHomeLogo,
                 redirect = listOf(instagramHomeLogo, first { it.text == "following" })
             ),
-            // Explore grid: on the Search tab while the search box is idle. Tapping
-            // the box swaps the grid for the search screen, so searching works.
+            // Explore grid: backup for when it's reached without the (covered)
+            // tab button. On the Search tab while the search box is idle, tap the
+            // box, which swaps the grid for the search screen.
             Section(
                 name = "Explore",
                 detect = { screen ->
@@ -168,7 +169,9 @@ object FeatureBlocks {
             )
         ),
         optionLabel = "No suggested posts, no Explore (rest of app works)",
-        summary = "👥 Suggested posts & Explore hidden"
+        summary = "👥 Suggested posts hidden · Explore tab hidden",
+        // The bottom-bar "Search and explore" tab button.
+        covers = listOf(first { it.desc == "search and explore" && it.text.isNullOrEmpty() && it.clickable })
     )
 
     private val features = mapOf(
