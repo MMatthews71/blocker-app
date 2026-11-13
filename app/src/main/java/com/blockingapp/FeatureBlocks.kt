@@ -24,6 +24,13 @@ typealias AreaFinder = (List<FeatureBlocks.ScreenNode>) -> FeatureBlocks.Bounds?
  */
 object FeatureBlocks {
 
+    /**
+     * An area to black out while [area] finds it on screen. If [openedBy]
+     * matches the element the user taps (e.g. a tab button), the area is blacked
+     * out the instant they tap it, before the new screen is even drawn.
+     */
+    data class Blackout(val area: AreaFinder, val openedBy: ((ScreenNode) -> Boolean)? = null)
+
     /** A rectangle on screen, in pixels. */
     data class Bounds(val left: Int, val top: Int, val right: Int, val bottom: Int)
 
@@ -80,7 +87,7 @@ object FeatureBlocks {
          */
         val covers: List<ScreenFinder> = emptyList(),
         /** Whole areas to black out (taps swallowed too) while they're showing. */
-        val blackouts: List<AreaFinder> = emptyList()
+        val blackouts: List<Blackout> = emptyList()
     ) {
         /** Short name for dialogs and the app list, e.g. "Discover & Spotlight". */
         val name: String get() = sections.map { it.name }.distinct().joinToString(" & ")
@@ -193,7 +200,7 @@ object FeatureBlocks {
         optionLabel = "Messages & search only: no feed, Reels or Explore",
         summary = "💬 Messages & search only · feed & Reels hidden · Explore blacked out",
         covers = listOf(instagramTab("home"), instagramTab("reels")),
-        blackouts = listOf(instagramExploreGridArea)
+        blackouts = listOf(Blackout(instagramExploreGridArea, openedBy = { it.desc == "search and explore" }))
     )
 
     private val features = mapOf(
