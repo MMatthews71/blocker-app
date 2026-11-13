@@ -140,25 +140,26 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val pkg = event.packageName?.toString() ?: return
-        // A new window from another app (our block screen, the notification
-        // shade, a different app) means the covered button isn't showing.
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            !featurePackages.containsKey(pkg)
-        ) {
-            hideCover()
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            if (pkg == packageName) {
+                // Our own cover window announces itself like this too; only one
+                // of our screens (e.g. the block screen) means the button is gone.
+                if (event.className?.toString()?.endsWith("Activity") == true) hideCover()
+            } else if (featurePackages.containsKey(pkg)) {
+                // Put the cover back where it was straight away; the scan below
+                // corrects it if the button has moved or isn't on this screen.
+                if (!isOnBreakFast()) lastCoverRects[pkg]?.let { showCover(it) }
+            } else {
+                // Another app or the notification shade: the button isn't showing.
+                hideCover()
+            }
         }
         if (pkg == packageName) return // never block our own app
 
         // Section blocks: switching tabs inside an app (e.g. to Snapchat's
         // Discover) only fires content-changed events, not window-state ones.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
-            if (featurePackages.containsKey(pkg)) {
-                val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastFeatureScanAt >= FEATURE_SCAN_THROTTLE_MS) {
-                    lastFeatureScanAt = now
-                    checkFeatureBlock(pkg)
-                }
-            }
+            if (featurePackages.containsKey(pkg)) scheduleFeatureScan(pkg)
             return
         }
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
@@ -189,6 +190,27 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         mainHandler.post { launchBlockActivity() }
     }
 
+    private var pendingScanPkg: String? = null
+    private val pendingScan = Runnable {
+        val pkg = pendingScanPkg ?: return@Runnable
+        pendingScanPkg = null
+        lastFeatureScanAt = android.os.SystemClock.uptimeMillis()
+        checkFeatureBlock(pkg)
+    }
+
+    /**
+     * Scans [pkg] now, or as soon as the throttle allows. Changes that arrive
+     * while throttled are never dropped: the last one is scanned at the end of
+     * the window, so the cover follows the screen without lagging behind.
+     */
+    private fun scheduleFeatureScan(pkg: String, minDelayMs: Long = 0L) {
+        pendingScanPkg = pkg
+        mainHandler.removeCallbacks(pendingScan)
+        val sinceLast = android.os.SystemClock.uptimeMillis() - lastFeatureScanAt
+        val wait = maxOf(minDelayMs, FEATURE_SCAN_THROTTLE_MS - sinceLast, 0L)
+        if (wait == 0L) pendingScan.run() else mainHandler.postDelayed(pendingScan, wait)
+    }
+
     /**
      * If [pkg] is showing a restricted section right now, either redirect (tap
      * through the app for the user) or step out of it and show the block screen.
@@ -203,7 +225,11 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             }
             val feature = featurePackages[pkg] ?: run { hideCover(); return }
             val root = rootInActiveWindow
-            if (root == null) { diagThrottled(pkg, "$pkg: no window content available"); return }
+            if (root == null) {
+                diagThrottled(pkg, "$pkg: no window content available")
+                scheduleFeatureScan(pkg, EMPTY_WINDOW_RETRY_MS) // the app is still drawing
+                return
+            }
             if (root.packageName?.toString() != pkg) {
                 hideCover()
                 diagThrottled(pkg, "$pkg: active window belongs to ${root.packageName}")
@@ -323,18 +349,38 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     private var coverView: View? = null
     private var coverRect: Rect? = null
+    /** Where each app's button was last seen, so reopening the app covers it instantly. */
+    private val lastCoverRects = HashMap<String, Rect>()
+    private val hideCoverRunnable = Runnable { hideCover() }
 
     /** Shows/moves the cover onto [feature]'s button if it's on screen, else hides it. */
     private fun updateCover(pkg: String, feature: FeatureBlocks.Feature, snapshot: Snapshot) {
+        if (feature.covers.isEmpty()) return
         val index = feature.covers.firstNotNullOfOrNull { it(snapshot.nodes) }
-        if (index == null) { hideCover(); return }
+        if (index == null) { hideCoverSoon(); return }
         val rect = Rect().also { snapshot.infos[index].getBoundsInScreen(it) }
-        if (rect.isEmpty) { hideCover(); return }
+        if (rect.isEmpty) { hideCoverSoon(); return }
+        // Mid-swipe, the button can be reported partly off screen for a frame;
+        // keep the cover where it is rather than chasing it.
+        val screenWidth = resources.displayMetrics.widthPixels
+        if (rect.left < 0 || rect.right > screenWidth) return
         if (rect != coverRect) diag("$pkg: covering button at ${rect.toShortString()}")
+        lastCoverRects[pkg] = Rect(rect)
         showCover(rect)
     }
 
+    /**
+     * Hides the cover unless the button turns up again within a moment, so a
+     * single frame where the app's bar is missing doesn't make it blink.
+     */
+    private fun hideCoverSoon() {
+        if (coverView == null) return
+        mainHandler.removeCallbacks(hideCoverRunnable)
+        mainHandler.postDelayed(hideCoverRunnable, COVER_HIDE_GRACE_MS)
+    }
+
     private fun showCover(rect: Rect) {
+        mainHandler.removeCallbacks(hideCoverRunnable)
         if (coverView != null && rect == coverRect) return
         val wm = getSystemService(WindowManager::class.java)
         val params = WindowManager.LayoutParams(
@@ -375,6 +421,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     private fun hideCover() {
+        mainHandler.removeCallbacks(hideCoverRunnable)
         val view = coverView ?: return
         runCatching { getSystemService(WindowManager::class.java).removeView(view) }
         coverView = null
@@ -624,6 +671,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     /** Full block by default; pass [feature] to block just one section of [appLabel]. */
     private fun launchBlockActivity(feature: String? = null, appLabel: String? = null) {
+        hideCover()
         val intent = Intent(this, BlockActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (feature != null) {
@@ -675,7 +723,9 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val BOUNCE_DEBOUNCE_MS = 1500L
 
         // Section-block tuning.
-        private const val FEATURE_SCAN_THROTTLE_MS = 300L
+        private const val FEATURE_SCAN_THROTTLE_MS = 200L
+        private const val EMPTY_WINDOW_RETRY_MS = 120L
+        private const val COVER_HIDE_GRACE_MS = 250L
         private const val FEATURE_BLOCK_DEBOUNCE_MS = 2000L
         private const val FEATURE_BLOCK_LAUNCH_DELAY_MS = 250L
         private const val MAX_FEATURE_NODES_SCANNED = 1500
