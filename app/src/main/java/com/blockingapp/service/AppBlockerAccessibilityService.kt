@@ -174,7 +174,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             val feature = featurePackages[pkg] ?: return
             val root = rootInActiveWindow ?: return
             if (root.packageName?.toString() != pkg) return
-            if (!screenShowsLabel(root, feature.screenLabels)) return
+            val section = openSection(root, feature.sections) ?: return
 
             val now = android.os.SystemClock.uptimeMillis()
             if (now - lastFeatureBlockAt < FEATURE_BLOCK_DEBOUNCE_MS) return
@@ -185,7 +185,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             // Launch after a short delay so this BACK can't close the block screen.
             performGlobalAction(GLOBAL_ACTION_BACK)
             mainHandler.postDelayed({
-                launchBlockActivity(feature.name, appLabel(pkg))
+                launchBlockActivity(section.name, appLabel(pkg))
             }, FEATURE_BLOCK_LAUNCH_DELAY_MS)
         } catch (t: Throwable) {
             // Never let a traversal failure take down the blocker.
@@ -193,11 +193,18 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * True when a visible element's text or content description is exactly one of
-     * [labels]. Unselected tabs/buttons are skipped: a button that *leads* to the
-     * section isn't the section being open.
+     * The blocked section currently open on screen, or null. A section is open
+     * when a visible element's text or content description is exactly one of its
+     * labels, and:
+     *  - for a normal section (e.g. the "Discover" heading): the element isn't an
+     *    unselected button, since a button that *leads* there isn't the section;
+     *  - for a tab section (e.g. "Spotlight" in the bottom bar, always visible):
+     *    the tab, or its clickable container, is the selected one.
      */
-    private fun screenShowsLabel(root: AccessibilityNodeInfo, labels: Set<String>): Boolean {
+    private fun openSection(
+        root: AccessibilityNodeInfo,
+        sections: List<FeatureBlocks.Section>
+    ): FeatureBlocks.Section? {
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         var visited = 0
@@ -207,14 +214,38 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             if (node.isVisibleToUser) {
                 val text = node.text?.toString()?.trim()?.lowercase()
                 val desc = node.contentDescription?.toString()?.trim()?.lowercase()
-                val matches = (text != null && text in labels) || (desc != null && desc in labels)
-                if (matches && !(node.isClickable && !node.isSelected)) {
-                    return true
+                for (section in sections) {
+                    val matches = (text != null && text in section.labels) ||
+                        (desc != null && desc in section.labels)
+                    if (!matches) continue
+                    val open = if (section.isTab) {
+                        isSelectedTab(node)
+                    } else {
+                        !(node.isClickable && !node.isSelected)
+                    }
+                    if (open) return section
                 }
             }
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { queue.add(it) }
             }
+        }
+        return null
+    }
+
+    /**
+     * Whether [node] belongs to the selected tab: it, or one of its nearest
+     * ancestors (tab labels often sit inside a clickable container), is marked
+     * selected/checked. If the app doesn't expose that state this returns false,
+     * so the tab is never blocked by mistake rather than blocking the whole app.
+     */
+    private fun isSelectedTab(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (current != null && depth <= TAB_ANCESTOR_DEPTH) {
+            if (current.isSelected || current.isChecked) return true
+            current = current.parent
+            depth++
         }
         return false
     }
@@ -378,6 +409,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val FEATURE_BLOCK_DEBOUNCE_MS = 2000L
         private const val FEATURE_BLOCK_LAUNCH_DELAY_MS = 250L
         private const val MAX_FEATURE_NODES_SCANNED = 1500
+        private const val TAB_ANCESTOR_DEPTH = 3
         // Action words on the final confirm step of each escape route:
         //  uninstall / force stop -> app-info page & uninstall dialog
         //  deactivate             -> device-admin deactivation screen
