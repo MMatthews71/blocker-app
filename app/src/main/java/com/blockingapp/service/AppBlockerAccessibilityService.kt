@@ -237,7 +237,13 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             }
             val snapshot = snapshotScreen(root)
             updateCover(pkg, feature, snapshot)
-            val section = feature.sections.firstOrNull { it.detect(snapshot.nodes) != null }
+            val nowMs = android.os.SystemClock.uptimeMillis()
+            val section = feature.sections.firstOrNull { candidate ->
+                // A redirect that recently couldn't complete steps aside, so the
+                // next matching section (e.g. a wall) handles the screen instead.
+                (failedRedirectUntil["$pkg/${candidate.name}"] ?: 0L) <= nowMs &&
+                    candidate.detect(snapshot.nodes) != null
+            }
             if (shouldDiag(pkg)) {
                 diag("$pkg: open section = ${section?.name ?: "none"}. Visible elements:\n" + describeScreen(root))
             }
@@ -263,7 +269,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
             if (redirect != null) {
                 diag("$pkg: redirecting away from ${section.name}")
-                runRedirect(pkg, redirect, 0, snapshot, retriesLeft = REDIRECT_RETRIES)
+                runRedirect(pkg, section.name, redirect, 0, snapshot, retriesLeft = REDIRECT_RETRIES)
                 return
             }
 
@@ -284,8 +290,12 @@ class AppBlockerAccessibilityService : AccessibilityService() {
      * to the next step once the app has had a moment to react. If a step's
      * element isn't on screen yet, it's retried a couple of times, then dropped.
      */
+    /** "pkg/section" → when a redirect that couldn't complete may be tried again. */
+    private val failedRedirectUntil = HashMap<String, Long>()
+
     private fun runRedirect(
         pkg: String,
+        sectionName: String,
         steps: List<ScreenFinder>,
         index: Int,
         snapshot: Snapshot?,
@@ -300,17 +310,21 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             if (shot == null || target == null) {
                 if (retriesLeft > 0) {
                     mainHandler.postDelayed({
-                        runRedirect(pkg, steps, index, null, retriesLeft - 1)
+                        runRedirect(pkg, sectionName, steps, index, null, retriesLeft - 1)
                     }, REDIRECT_STEP_DELAY_MS)
                 } else {
                     diag("$pkg: redirect step ${index + 1} found nothing to tap; giving up")
+                    failedRedirectUntil["$pkg/$sectionName"] =
+                        android.os.SystemClock.uptimeMillis() + REDIRECT_FAILURE_BACKOFF_MS
+                    // Close whatever an earlier step opened (e.g. a menu).
+                    if (index > 0) performGlobalAction(GLOBAL_ACTION_BACK)
                 }
                 return
             }
             val tapped = tap(shot.infos[target])
             diag("$pkg: redirect step ${index + 1} tapped=$tapped")
             mainHandler.postDelayed({
-                runRedirect(pkg, steps, index + 1, null, REDIRECT_RETRIES)
+                runRedirect(pkg, sectionName, steps, index + 1, null, REDIRECT_RETRIES)
             }, REDIRECT_STEP_DELAY_MS)
         } catch (t: Throwable) {
             // Never let a redirect failure take down the blocker.
@@ -748,6 +762,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val REDIRECT_RETRIES = 2
         // Two steps with retries can take ~4s; don't start another meanwhile.
         private const val REDIRECT_QUIET_MS = 4500L
+        private const val REDIRECT_FAILURE_BACKOFF_MS = 10L * 60 * 1000
         private const val SCROLL_ANCESTOR_DEPTH = 12
         private const val WALL_QUIET_MS = 700L
         private const val WALL_SECOND_SCROLL_DELAY_MS = 250L

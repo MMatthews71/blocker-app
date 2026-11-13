@@ -125,31 +125,43 @@ object FeatureBlocks {
             )
     }
 
-    /** The Instagram logo at the top of the home feed (unconfirmed: not seen in a log yet). */
+    /**
+     * The Instagram logo at the top of the main feed. A device log shows it as
+     * an unlabelled button around an element described "Instagram Home Feed";
+     * tapping that element taps the button.
+     */
     private val instagramHomeLogo: ScreenFinder = first {
-        it.clickable && (it.desc == "instagram" || it.text == "instagram")
+        it.desc == "instagram home feed" ||
+            (it.clickable && (it.desc == "instagram" || it.text == "instagram"))
+    }
+
+    /** "Following" in the menu the logo opens. */
+    private val instagramFollowingOption: ScreenFinder = first {
+        it.text == "following" || it.desc == "following"
     }
 
     private val instagram = Feature(
         sections = listOf(
-            // Suggested posts: scroll back so you can't scroll into them. Checked
-            // first so it still works while the home-feed redirect can't find the
-            // logo.
+            // A suggested post on the main ("For you") feed: switch to the
+            // Following feed, which only has posts from accounts you follow. It
+            // has no logo, so this can't loop once you're there.
+            Section(
+                name = "For-you feed",
+                detect = { screen ->
+                    instagramHomeLogo(screen)?.takeIf { instagramSuggestedPost(screen) != null }
+                },
+                redirect = listOf(instagramHomeLogo, instagramFollowingOption)
+            ),
+            // Fallback while the logo is scrolled out of view, or if the switch
+            // ever fails: scroll back so you can't scroll into suggested posts.
             Section(
                 name = "Suggested posts",
                 detect = instagramSuggestedPost,
                 wall = "That's everything from people you follow."
-            ),
-            // Home feed: tap the logo, then "Following" in the menu that opens.
-            // Stays inactive until the logo's label is confirmed from a log.
-            Section(
-                name = "For-you feed",
-                detect = instagramHomeLogo,
-                redirect = listOf(instagramHomeLogo, first { it.text == "following" })
             )
         ),
-        optionLabel = "No suggested posts (rest of app works)",
-        summary = "👥 Suggested posts hidden"
+        optionLabel = "Following feed only (rest of app works)",
+        summary = "👥 Following feed only · suggested posts hidden"
     )
 
     private val features = mapOf(
