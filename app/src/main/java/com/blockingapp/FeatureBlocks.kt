@@ -94,8 +94,10 @@ object FeatureBlocks {
         optionLabel = "Block Discover, Spotlight & Map only (rest of app works)",
         summary = "🚫 Discover, Spotlight & Map blocked · their tabs hidden",
         // The tab buttons: the label only as a description (the pages' titles
-        // have it as text instead).
+        // have it as text instead). Discover has no tab of its own; it lives on
+        // the Stories page, so the Stories button is the way in.
         covers = listOf(
+            first { it.desc == "stories" && it.text.isNullOrEmpty() && it.clickable },
             first { it.desc == "spotlight" && it.text.isNullOrEmpty() && it.clickable },
             first { it.desc == "map" && it.text.isNullOrEmpty() && it.clickable }
         )
