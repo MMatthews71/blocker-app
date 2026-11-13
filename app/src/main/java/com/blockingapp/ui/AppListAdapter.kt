@@ -24,6 +24,10 @@ class AppListAdapter(
             binding.tvMusicLimited.visibility =
                 if (app.isMusicLimited && !app.isPendingRemoval) android.view.View.VISIBLE
                 else android.view.View.GONE
+            binding.tvFeatureBlocked.text = "🚫 ${app.blockedFeature} blocked · rest of app works"
+            binding.tvFeatureBlocked.visibility =
+                if (app.blockedFeature != null && !app.isPendingRemoval) android.view.View.VISIBLE
+                else android.view.View.GONE
 
             // Prevent the checkbox from consuming the click before the row does.
             binding.cbBlocked.isClickable = false

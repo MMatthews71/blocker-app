@@ -38,7 +38,7 @@ object UninstallGate {
     /** Timestamp when the wait completes, or 0 if no request is active. */
     fun unlockAt(context: Context): Long = prefs(context).getLong(KEY_UNLOCK_AT, 0L)
 
-    fun state(context: Context, now: Long = System.currentTimeMillis()): State {
+    fun state(context: Context, now: Long = TrustedClock.now(context)): State {
         val unlockAt = unlockAt(context)
         return when {
             unlockAt == 0L -> State.LOCKED
@@ -49,12 +49,12 @@ object UninstallGate {
     }
 
     /** Whether the accessibility service should block routes to uninstall/deactivate. */
-    fun shouldGuard(context: Context, now: Long = System.currentTimeMillis()): Boolean =
+    fun shouldGuard(context: Context, now: Long = TrustedClock.now(context)): Boolean =
         state(context, now) != State.OPEN
 
     /** Start the 24-hour countdown. */
     fun requestUninstall(context: Context) {
-        prefs(context).edit().putLong(KEY_UNLOCK_AT, System.currentTimeMillis() + WAIT_MS).apply()
+        prefs(context).edit().putLong(KEY_UNLOCK_AT, TrustedClock.now(context) + WAIT_MS).apply()
     }
 
     /** Cancel a pending request (or clear an open/expired window) and re-lock. */

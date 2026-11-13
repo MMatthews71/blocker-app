@@ -57,6 +57,14 @@
             android:text="🎵 Music limited · 1h/day"
             android:visibility="gone" />
 
+        <TextView
+            android:id="@+id/tvFeatureBlocked"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"
+            android:textColor="@color/text_secondary"
+            android:visibility="gone" />
+
     </LinearLayout>
 
     <CheckBox

@@ -156,30 +156,47 @@ class MainActivity : AppCompatActivity() {
             app.isPendingRemoval -> showReblockDialog(app)
             app.isBlocked -> showUnblockConfirmation(app)
             app.isMusicLimited -> showUnblockConfirmation(app)
+            app.blockedFeature != null -> showUnblockConfirmation(app)
             else -> showAddModeDialog(app)
         }
     }
 
     private fun showAddModeDialog(app: AppInfo) {
-        val options = arrayOf("Block app entirely", "Limit music to 1 hour/day")
+        // Apps with a blockable section (e.g. Snapchat Discover) list that option first.
+        val feature = FeatureBlocks.forPackage(app.packageName)
+        val choices = buildList {
+            if (feature != null) {
+                add("Block ${feature.name} only (rest of app works)" to BlockedApp.MODE_FEATURE)
+            }
+            add("Block app entirely" to BlockedApp.MODE_BLOCK)
+            add("Limit music to 1 hour/day" to BlockedApp.MODE_MUSIC)
+        }
         MaterialAlertDialogBuilder(this)
             .setTitle(app.name)
-            .setItems(options) { _, which ->
-                val mode = if (which == 0) BlockedApp.MODE_BLOCK else BlockedApp.MODE_MUSIC
-                viewModel.addApp(app.packageName, mode)
+            .setItems(choices.map { it.first }.toTypedArray()) { _, which ->
+                viewModel.addApp(app.packageName, choices[which].second)
             }
             .setNegativeButton("Cancel", null)
             .show()
     }
 
     private fun showUnblockConfirmation(app: AppInfo) {
-        val isMusic = app.isMusicLimited
-        val title = if (isMusic) "Remove music limit on ${app.name}?" else "Unblock ${app.name}?"
-        val pendingNote =
-            if (isMusic) "(stays limited until tomorrow)" else "(app stays blocked until tomorrow)"
-        val finalNote =
-            if (isMusic) "${app.name}'s music stays limited until tomorrow."
-            else "${app.name} will stay blocked until tomorrow."
+        val feature = app.blockedFeature
+        val title = when {
+            app.isMusicLimited -> "Remove music limit on ${app.name}?"
+            feature != null -> "Unblock ${app.name} $feature?"
+            else -> "Unblock ${app.name}?"
+        }
+        val pendingNote = when {
+            app.isMusicLimited -> "(stays limited until tomorrow)"
+            feature != null -> "($feature stays blocked until tomorrow)"
+            else -> "(app stays blocked until tomorrow)"
+        }
+        val finalNote = when {
+            app.isMusicLimited -> "${app.name}'s music stays limited until tomorrow."
+            feature != null -> "${app.name} $feature will stay blocked until tomorrow."
+            else -> "${app.name} will stay blocked until tomorrow."
+        }
 
         var countdownJob: Job? = null
 
@@ -278,7 +295,7 @@ class MainActivity : AppCompatActivity() {
                 primary.setOnClickListener { confirmRequestUninstall() }
             }
             UninstallGate.State.PENDING -> {
-                val remaining = UninstallGate.unlockAt(this) - System.currentTimeMillis()
+                val remaining = UninstallGate.unlockAt(this) - TrustedClock.now(this)
                 title.text = "Uninstall unlocks soon"
                 body.text = "Unlocks in ${formatDuration(remaining)}. " +
                     "You can cancel and stay protected."
@@ -289,7 +306,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             UninstallGate.State.OPEN -> {
-                val remaining = UninstallGate.unlockAt(this) + UninstallGate.WINDOW_MS - System.currentTimeMillis()
+                val remaining = UninstallGate.unlockAt(this) + UninstallGate.WINDOW_MS - TrustedClock.now(this)
                 title.text = "Uninstall unlocked"
                 body.text = "You can remove the app for the next ${formatDuration(remaining)}, " +
                     "then protection re-locks."

@@ -5,9 +5,13 @@ import com.blockingapp.data.AppDatabase
 import com.blockingapp.data.BlockedApp
 import com.blockingapp.data.DailyFocusState
 import kotlinx.coroutines.flow.Flow
-import java.time.LocalDate
+import java.time.Instant
+import java.time.ZoneId
 
-class BlockerRepository private constructor(db: AppDatabase) {
+class BlockerRepository private constructor(
+    private val context: Context,
+    db: AppDatabase
+) {
 
     private val blockedAppDao = db.blockedAppDao()
     private val stateDao = db.dailyFocusStateDao()
@@ -15,24 +19,54 @@ class BlockerRepository private constructor(db: AppDatabase) {
     val blockedAppsFlow: Flow<List<BlockedApp>> = blockedAppDao.getAllFlow()
     val dailyStateFlow: Flow<DailyFocusState?> = stateDao.getFlow()
 
-    private fun todayString(): String = LocalDate.now().toString()
+    /** Tamper-resistant "now" — see [TrustedClock]. */
+    fun now(): Long = TrustedClock.now(context)
+
+    private fun dateString(at: Long): String =
+        Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault()).toLocalDate().toString()
+
+    private fun nextMidnight(at: Long): Long {
+        val zone = ZoneId.systemDefault()
+        return Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
+            .plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    }
+
+    /**
+     * When the day that starts now should end: the next local midnight, but never
+     * sooner than [MIN_DAY_MS] after the previous reset. The floor stops switching
+     * time zones (e.g. to one where it's already 11 PM) from producing extra
+     * resets, while still letting real travel and DST land close to midnight.
+     */
+    private fun nextResetAt(now: Long, previousResetAt: Long): Long =
+        maxOf(nextMidnight(now), previousResetAt + MIN_DAY_MS)
 
     suspend fun getDailyState(): DailyFocusState {
-        val today = todayString()
+        val now = now()
         val existing = stateDao.get()
-        return if (existing == null || existing.dateString != today) {
-            blockedAppDao.deletePendingRemovals()
-            val fresh = DailyFocusState(dateString = today)
-            stateDao.upsert(fresh)
-            fresh
-        } else {
-            existing
+        val expired = when {
+            existing == null -> true
+            existing.resetsAt == 0L -> existing.dateString != dateString(now) // legacy row
+            else -> now >= existing.resetsAt
         }
+        if (existing == null || expired) {
+            blockedAppDao.deletePendingRemovals()
+            val fresh = DailyFocusState(
+                dateString = dateString(now),
+                resetsAt = nextResetAt(now, existing?.resetsAt ?: 0L)
+            )
+            stateDao.upsert(fresh)
+            return fresh
+        }
+        if (existing.resetsAt == 0L) {
+            // Legacy row from today: pin its reset moment now.
+            return existing.copy(resetsAt = nextMidnight(now)).also { stateDao.upsert(it) }
+        }
+        return existing
     }
 
     suspend fun isOnBreak(): Boolean {
         val state = getDailyState()
-        return state.breakEndsAt > System.currentTimeMillis()
+        return state.breakEndsAt > now()
     }
 
     suspend fun canTakeBreak(): Boolean {
@@ -44,7 +78,7 @@ class BlockerRepository private constructor(db: AppDatabase) {
     suspend fun startBreak(): Long {
         val state = getDailyState()
         if (state.breaksUsed >= MAX_BREAKS) return -1L
-        val breakEndsAt = System.currentTimeMillis() + BREAK_DURATION_MS
+        val breakEndsAt = now() + BREAK_DURATION_MS
         stateDao.upsert(state.copy(breaksUsed = state.breaksUsed + 1, breakEndsAt = breakEndsAt))
         return breakEndsAt
     }
@@ -97,12 +131,16 @@ class BlockerRepository private constructor(db: AppDatabase) {
     companion object {
         const val MAX_BREAKS = 2
         const val BREAK_DURATION_MS = 15L * 60 * 1000
+        private const val MIN_DAY_MS = 20L * 60 * 60 * 1000
 
         @Volatile private var INSTANCE: BlockerRepository? = null
 
         fun getInstance(context: Context): BlockerRepository =
             INSTANCE ?: synchronized(this) {
-                BlockerRepository(AppDatabase.getInstance(context)).also { INSTANCE = it }
+                BlockerRepository(
+                    context.applicationContext,
+                    AppDatabase.getInstance(context)
+                ).also { INSTANCE = it }
             }
     }
 }
