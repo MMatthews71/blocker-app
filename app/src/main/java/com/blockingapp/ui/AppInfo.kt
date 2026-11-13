@@ -8,7 +8,9 @@ data class AppInfo(
     val icon: Drawable,
     val isBlocked: Boolean,
     val isPendingRemoval: Boolean = false,
-    val isMusicLimited: Boolean = false
+    val isMusicLimited: Boolean = false,
+    /** Name of the blocked section (e.g. "Discover") when only part of the app is blocked. */
+    val blockedFeature: String? = null
 ) {
     // Exclude icon from equality so DiffUtil only redraws on meaningful changes.
     override fun equals(other: Any?): Boolean {
@@ -18,13 +20,15 @@ data class AppInfo(
             packageName == other.packageName &&
             isBlocked == other.isBlocked &&
             isPendingRemoval == other.isPendingRemoval &&
-            isMusicLimited == other.isMusicLimited
+            isMusicLimited == other.isMusicLimited &&
+            blockedFeature == other.blockedFeature
     }
 
     override fun hashCode(): Int {
         var result = 31 * (31 * name.hashCode() + packageName.hashCode()) + isBlocked.hashCode()
         result = 31 * result + isPendingRemoval.hashCode()
         result = 31 * result + isMusicLimited.hashCode()
+        result = 31 * result + (blockedFeature?.hashCode() ?: 0)
         return result
     }
 }

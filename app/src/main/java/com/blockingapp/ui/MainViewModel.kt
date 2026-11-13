@@ -8,6 +8,8 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.viewModelScope
 import com.blockingapp.BlockerRepository
+import com.blockingapp.FeatureBlocks
+import com.blockingapp.data.BlockedApp
 import com.blockingapp.data.DailyFocusState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,15 +40,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (pkg == "com.blockingapp") return@mapNotNull null
                     runCatching {
                         val entry = blockedApps[pkg]
-                        val isMusic = entry?.mode == com.blockingapp.data.BlockedApp.MODE_MUSIC
+                        val mode = entry?.mode
                         AppInfo(
                             name = resolveInfo.loadLabel(pm).toString(),
                             packageName = pkg,
                             icon = resolveInfo.loadIcon(pm),
-                            // "Blocked" = full app block only; music-limited is a separate state.
-                            isBlocked = entry != null && !isMusic,
+                            // "Blocked" = full app block only; music/feature limits are separate states.
+                            isBlocked = mode == BlockedApp.MODE_BLOCK,
                             isPendingRemoval = entry?.pendingRemoval == true,
-                            isMusicLimited = isMusic
+                            isMusicLimited = mode == BlockedApp.MODE_MUSIC,
+                            blockedFeature = if (mode == BlockedApp.MODE_FEATURE) {
+                                FeatureBlocks.forPackage(pkg)?.name ?: "Section"
+                            } else null
                         )
                     }.getOrNull()
                 }

@@ -33,14 +33,52 @@ class BlockActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (isConfirming) cancelConfirmation() else goHome()
+                if (isConfirming) cancelConfirmation() else leave()
             }
         })
 
         binding.btnBreak.setOnClickListener {
             if (isConfirming) cancelConfirmation() else startConfirmation()
         }
-        binding.btnGoHome.setOnClickListener { goHome() }
+        binding.btnGoHome.setOnClickListener { leave() }
+        applyBlockKind()
+    }
+
+    // singleTask: a second block (e.g. full app after a section block) arrives here.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        applyBlockKind()
+    }
+
+    /** Section name (e.g. "Discover") when only part of an app is blocked, else null. */
+    private val blockedFeature: String?
+        get() = intent?.getStringExtra(EXTRA_FEATURE)
+
+    private fun applyBlockKind() {
+        val feature = blockedFeature
+        if (feature == null) {
+            binding.tvBlockedMessage.text = "This app is blocked."
+            binding.btnGoHome.text = "Go to Home Screen"
+        } else {
+            val app = intent?.getStringExtra(EXTRA_APP_LABEL) ?: "this app"
+            binding.tvBlockedMessage.text =
+                "$app $feature is blocked.\nThe rest of $app still works."
+            binding.btnGoHome.text = "Back to $app"
+        }
+    }
+
+    /**
+     * Full block: send the user home. Section block: just close, which drops them
+     * back into the app (the service already navigated it away from the section).
+     */
+    private fun leave() {
+        if (blockedFeature == null) {
+            goHome()
+        } else {
+            if (isConfirming) cancelConfirmation()
+            finish()
+        }
     }
 
     override fun onResume() {
@@ -122,5 +160,7 @@ class BlockActivity : AppCompatActivity() {
 
     companion object {
         private const val CONFIRM_SECONDS = 30
+        const val EXTRA_FEATURE = "com.blockingapp.extra.FEATURE"
+        const val EXTRA_APP_LABEL = "com.blockingapp.extra.APP_LABEL"
     }
 }
