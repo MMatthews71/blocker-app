@@ -111,8 +111,10 @@ object FeatureBlocks {
     )
 
     // ---- Instagram --------------------------------------------------------
-    // Messages only: every feed in the app is chosen by the algorithm, so the
-    // Home, Reels and Search tabs are covered and their pages sent to Messages.
+    // Messages and search only: every feed in the app is chosen by the
+    // algorithm, so the Home and Reels tabs are covered and their pages sent to
+    // Messages. The Search tab stays, but its Explore grid never shows: the
+    // search box is tapped straight away, so you can still look people up.
     // Instagram hides its view ids (all null), so these rules use the bottom
     // tabs' descriptions and selected state, which a device log confirmed.
 
@@ -137,10 +139,31 @@ object FeatureBlocks {
         Section(name = name, detect = instagramOnTab(tab))
     )
 
+    /** The search box at the top of the Search tab (placeholder "Search with Meta AI"). */
+    private val instagramSearchBox: ScreenFinder = first { it.editable }
+
+    /**
+     * The Explore grid: the search box sitting idle above it, on the Search tab
+     * or above the grid's tiles ("… at row 1, column 2"; the bar can be hidden
+     * mid-transition). While you type, or once a search has run, it's left alone.
+     */
+    private val instagramExploreGrid: ScreenFinder = { screen ->
+        instagramSearchBox(screen)?.takeIf { i ->
+            val box = screen[i]
+            val idle = !box.focused && (box.text.isNullOrEmpty() || box.showingHint ||
+                box.text == "search" || box.labelStartsWith("search with meta ai", "ask meta ai"))
+            val onGrid = screen.any { it.desc == "search and explore" && it.selected } ||
+                screen.any { it.desc?.contains(" at row ") == true }
+            idle && onGrid
+        }
+    }
+
     private val instagram = Feature(
         sections = instagramTabToMessages("Feed", "home") +
             instagramTabToMessages("Reels", "reels") +
-            instagramTabToMessages("Explore", "search and explore") +
+            // Explore grid: tap into the search box instead; block if that fails.
+            Section(name = "Explore", detect = instagramExploreGrid, redirect = listOf(instagramSearchBox)) +
+            Section(name = "Explore", detect = instagramExploreGrid) +
             // A reel opened from a chat or a profile: watch that one, but swiping
             // up to the next (algorithm-picked) reel steps back out. (On the
             // Reels tab itself the rules above already apply.)
@@ -151,9 +174,9 @@ object FeatureBlocks {
                 detect = first { it.labelStartsWith("reel by ") && it.desc?.contains("double tap") == true },
                 onlyFirst = "Just the reel you opened."
             ),
-        optionLabel = "Messages only: no feed, Reels or Explore",
-        summary = "💬 Messages only · feed, Reels & Explore hidden",
-        covers = listOf(instagramTab("home"), instagramTab("reels"), instagramTab("search and explore"))
+        optionLabel = "Messages & search only: no feed, Reels or Explore",
+        summary = "💬 Messages & search only · feed, Reels & Explore hidden",
+        covers = listOf(instagramTab("home"), instagramTab("reels"))
     )
 
     private val features = mapOf(
