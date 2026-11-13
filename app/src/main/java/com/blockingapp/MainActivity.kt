@@ -132,7 +132,7 @@ class MainActivity : AppCompatActivity() {
         val feature = FeatureBlocks.forPackage(app.packageName)
         val choices = buildList {
             if (feature != null) {
-                add("Block ${feature.name} only (rest of app works)" to BlockedApp.MODE_FEATURE)
+                add(feature.optionLabel to BlockedApp.MODE_FEATURE)
             }
             add("Block app entirely" to BlockedApp.MODE_BLOCK)
         }
