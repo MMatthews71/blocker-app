@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [BlockedApp::class, DailyFocusState::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,9 +45,9 @@ abstract class AppDatabase : RoomDatabase() {
          *    unknown layout; rebuild rather than crash or wipe the block list.
          *  - v7: music limiting was removed — drop music-limited entries
          *    (they become unblocked) and the musicMsUsed column.
-         *  - v8 -> v9 also applies [switchSnapchatToDiscoverOnly].
+         *  - also applies the one-time switches below (v9, v10).
          */
-        private fun rebuildMigration(from: Int) = object : Migration(from, 9) {
+        private fun rebuildMigration(from: Int) = object : Migration(from, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // Music limiting no longer exists: those apps are simply unblocked.
                 // Done before the rebuild, which turns unknown modes into BLOCK.
@@ -83,6 +83,7 @@ abstract class AppDatabase : RoomDatabase() {
                     )
                 )
                 switchSnapchatToDiscoverOnly(db)
+                switchInstagramToFollowingOnly(db)
             }
         }
 
@@ -101,6 +102,24 @@ abstract class AppDatabase : RoomDatabase() {
         private val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 switchSnapchatToDiscoverOnly(db)
+            }
+        }
+
+        /**
+         * One-time switch requested by the owner: Instagram was fully blocked and
+         * couldn't be changed to "Following feed only, no Explore" without waiting
+         * a day for the unblock. Runs once, as part of the upgrade to v10.
+         */
+        private fun switchInstagramToFollowingOnly(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "UPDATE `blocked_apps` SET `mode` = 'FEATURE', `pendingRemoval` = 0 " +
+                    "WHERE `packageName` = 'com.instagram.android'"
+            )
+        }
+
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                switchInstagramToFollowingOnly(db)
             }
         }
 
@@ -168,7 +187,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
                         rebuildMigration(4), rebuildMigration(5), rebuildMigration(6),
-                        rebuildMigration(7), MIGRATION_8_9
+                        rebuildMigration(7), MIGRATION_8_9, MIGRATION_9_10
                     )
                     // Installing an older build over a newer one must never leave
                     // the blocker in a crash loop; start fresh instead.
