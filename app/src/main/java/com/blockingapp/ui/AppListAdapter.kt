@@ -21,9 +21,6 @@ class AppListAdapter(
             binding.cbBlocked.isChecked = app.isBlocked
             binding.tvPendingRemoval.visibility =
                 if (app.isPendingRemoval) android.view.View.VISIBLE else android.view.View.GONE
-            binding.tvMusicLimited.visibility =
-                if (app.isMusicLimited && !app.isPendingRemoval) android.view.View.VISIBLE
-                else android.view.View.GONE
             binding.tvFeatureBlocked.text = "🚫 ${app.blockedFeature} blocked · rest of app works"
             binding.tvFeatureBlocked.visibility =
                 if (app.blockedFeature != null && !app.isPendingRemoval) android.view.View.VISIBLE

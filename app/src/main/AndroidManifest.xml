@@ -64,15 +64,6 @@
                 android:value="Keeps the app/website blocker running so blocked apps are detected while the screen is on." />
         </service>
 
-        <service
-            android:name=".service.MediaBlockerNotificationListenerService"
-            android:exported="true"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
         <!--
             Device admin: while active, Android blocks direct uninstall of the
             app. Combined with escape-screen guarding in the accessibility

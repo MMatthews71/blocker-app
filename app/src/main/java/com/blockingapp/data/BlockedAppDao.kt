@@ -15,13 +15,9 @@ interface BlockedAppDao {
     @Query("SELECT packageName FROM blocked_apps")
     suspend fun getAllPackageNames(): List<String>
 
-    /** Packages that should trigger the full block screen (music-limited apps stay browsable). */
+    /** Packages that should trigger the full block screen (section-only blocks stay browsable). */
     @Query("SELECT packageName FROM blocked_apps WHERE mode = 'BLOCK'")
     suspend fun getBlockModePackageNames(): List<String>
-
-    /** Packages whose music playback is limited to the daily budget. */
-    @Query("SELECT packageName FROM blocked_apps WHERE mode = 'MUSIC'")
-    suspend fun getMusicModePackageNames(): List<String>
 
     @Query("SELECT * FROM blocked_apps WHERE packageName = :pkg LIMIT 1")
     suspend fun get(pkg: String): BlockedApp?

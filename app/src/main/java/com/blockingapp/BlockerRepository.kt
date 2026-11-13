@@ -85,11 +85,9 @@ class BlockerRepository private constructor(
 
     suspend fun getAllBlockedPackages(): List<String> = blockedAppDao.getAllPackageNames()
 
-    /** Packages that trigger the full block screen — excludes music-limited apps. */
+    /** Packages that trigger the full block screen (not section-only blocks). */
     suspend fun getBlockModePackages(): List<String> = blockedAppDao.getBlockModePackageNames()
 
-    /** Packages whose music playback is capped by the daily budget. */
-    suspend fun getMusicModePackages(): List<String> = blockedAppDao.getMusicModePackageNames()
 
     suspend fun getAllBlockedApps(): List<BlockedApp> = blockedAppDao.getAll()
 
@@ -119,14 +117,6 @@ class BlockerRepository private constructor(
         }
     }
 
-    suspend fun getMusicMsUsedToday(): Long = getDailyState().musicMsUsed
-
-    /** Add elapsed listening time to today's music budget; returns the new total. */
-    suspend fun addMusicListeningTime(deltaMs: Long): Long {
-        getDailyState() // ensure today's row exists (handles the midnight reset)
-        if (deltaMs > 0) stateDao.addMusicMs(deltaMs)
-        return stateDao.getMusicMs() ?: 0L
-    }
 
     companion object {
         const val MAX_BREAKS = 2

@@ -10,7 +10,7 @@ import android.provider.Settings
  *
  * [System.currentTimeMillis] follows whatever the user sets the phone's clock to,
  * so setting it to 11:59 PM and waiting a minute used to trigger the daily reset
- * (fresh breaks, pending removals applied, music budget cleared).
+ * (fresh breaks, pending removals applied).
  *
  * Instead, we take one wall-clock reading as an *anchor* and then advance it with
  * [SystemClock.elapsedRealtime], a monotonic counter that changing the date/time
