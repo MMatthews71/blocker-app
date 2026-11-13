@@ -105,15 +105,10 @@ object FeatureBlocks {
 
     // ---- Instagram --------------------------------------------------------
     // Instagram hides its view ids from accessibility (every element's id is
-    // null), so these rules use labels and the bottom tab's selected state, which
-    // a device log confirmed Instagram does expose.
+    // null), so these rules use labels. Search & Explore is deliberately left alone.
 
     private fun ScreenNode.labelStartsWith(vararg prefixes: String): Boolean =
         prefixes.any { p -> text?.startsWith(p) == true || desc?.startsWith(p) == true }
-
-    /** The bottom-bar tab with this description is the selected one. */
-    private fun tabSelected(screen: List<ScreenNode>, tab: String): Boolean =
-        screen.any { it.desc == tab && it.selected }
 
     /**
      * A post from an account you don't follow. Each one's media carries a
@@ -135,15 +130,6 @@ object FeatureBlocks {
         it.clickable && (it.desc == "instagram" || it.text == "instagram")
     }
 
-    /** The search box on the Search tab: an editable field, or the "Search" placeholder. */
-    private val instagramSearchBox: ScreenFinder = { screen ->
-        screen.indexOfFirst { it.editable }.takeIf { it >= 0 }
-            ?: screen.indexOfFirst {
-                it.desc != "search and explore" &&
-                    (it.text == "search" || it.desc == "search" || it.labelStartsWith("ask meta ai"))
-            }.takeIf { it >= 0 }
-    }
-
     private val instagram = Feature(
         sections = listOf(
             // Suggested posts: scroll back so you can't scroll into them. Checked
@@ -160,27 +146,10 @@ object FeatureBlocks {
                 name = "For-you feed",
                 detect = instagramHomeLogo,
                 redirect = listOf(instagramHomeLogo, first { it.text == "following" })
-            ),
-            // Explore grid: backup for when it's reached without the (covered)
-            // tab button. On the Search tab while the search box is idle, tap the
-            // box, which swaps the grid for the search screen.
-            Section(
-                name = "Explore",
-                detect = { screen ->
-                    if (!tabSelected(screen, "search and explore")) null
-                    else instagramSearchBox(screen)?.takeIf { i ->
-                        val box = screen[i]
-                        !box.focused && (box.text.isNullOrEmpty() || box.showingHint ||
-                            box.text == "search" || box.labelStartsWith("ask meta ai"))
-                    }
-                },
-                redirect = listOf(instagramSearchBox)
             )
         ),
-        optionLabel = "No suggested posts, no Explore (rest of app works)",
-        summary = "👥 Suggested posts hidden · Explore tab hidden",
-        // The bottom-bar "Search and explore" tab button.
-        covers = listOf(first { it.desc == "search and explore" && it.text.isNullOrEmpty() && it.clickable })
+        optionLabel = "No suggested posts (rest of app works)",
+        summary = "👥 Suggested posts hidden"
     )
 
     private val features = mapOf(
