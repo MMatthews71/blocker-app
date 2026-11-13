@@ -86,10 +86,10 @@ object FeatureBlocks {
             // description and is never marked selected; the Spotlight page itself
             // shows "Spotlight" as title *text*.
             Section("Spotlight", first { it.text == "spotlight" }),
-            // Same pattern assumed for the Map page (not yet seen in a log): its
-            // title is text, its tab button a description. Backup for reaching
-            // it by swiping, since the tab button is covered.
-            Section("Map", first { it.text == "map" })
+            // The Map page: its root is described "Snap Map", and its overlay
+            // views carry "map_chrome/…" ids. Catches swiping in from Chat,
+            // since the tab button itself is covered.
+            Section("Map", first { it.desc == "snap map" || it.id?.contains("map_chrome") == true })
         ),
         optionLabel = "Block Discover, Spotlight & Map only (rest of app works)",
         summary = "🚫 Discover, Spotlight & Map blocked · their tabs hidden",
