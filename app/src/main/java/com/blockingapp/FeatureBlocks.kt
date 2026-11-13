@@ -10,9 +10,10 @@ typealias ScreenFinder = (List<FeatureBlocks.ScreenNode>) -> Int?
  *
  * Each [Section] looks at a snapshot of what's on screen. When it matches, the
  * section is either *blocked* (the app is stepped back and the block screen
- * appears), *redirected* (we tap through the app for the user, e.g. switching
- * Instagram's home feed to "Following"), or *walled* (the list is scrolled back
- * so the user can't scroll into it, e.g. Instagram's suggested posts).
+ * appears), *redirected* (we tap through the app for the user, e.g. sending
+ * Instagram's feed to Messages), *walled* (the list is scrolled back so the
+ * user can't scroll into it), or *limited to the first item* (e.g. the one reel
+ * a friend sent you, but not the next one swiped to).
  *
  * Detection reads the app's on-screen labels through the accessibility service,
  * so the rules must match what the app actually shows. When an app update changes
@@ -50,7 +51,13 @@ object FeatureBlocks {
          * detected element back up, and show this message. Acts as a wall at the
          * end of a feed.
          */
-        val wall: String? = null
+        val wall: String? = null,
+        /**
+         * If set, the first item [detect] finds after the section opens is
+         * allowed; moving on to a different one (told apart by its label) steps
+         * back out and shows this message.
+         */
+        val onlyFirst: String? = null
     )
 
     data class Feature(
@@ -104,64 +111,49 @@ object FeatureBlocks {
     )
 
     // ---- Instagram --------------------------------------------------------
-    // Instagram hides its view ids from accessibility (every element's id is
-    // null), so these rules use labels. Search & Explore is deliberately left alone.
+    // Messages only: every feed in the app is chosen by the algorithm, so the
+    // Home, Reels and Search tabs are covered and their pages sent to Messages.
+    // Instagram hides its view ids (all null), so these rules use the bottom
+    // tabs' descriptions and selected state, which a device log confirmed.
 
     private fun ScreenNode.labelStartsWith(vararg prefixes: String): Boolean =
         prefixes.any { p -> text?.startsWith(p) == true || desc?.startsWith(p) == true }
 
-    /**
-     * A post from an account you don't follow. Each one's media carries a
-     * description like "Suggested Photo by …" / "Suggested Reel by …", and
-     * blocks of them get a "Suggested posts" / "Suggested reels" header.
-     * Deliberately not "Suggested for you" alone: that also labels the
-     * friend-suggestion row.
-     */
-    private val instagramSuggestedPost: ScreenFinder = first {
-        it.text == "suggested posts" || it.text == "suggested reels" ||
-            it.labelStartsWith(
-                "suggested photo by", "suggested reel by", "suggested video by",
-                "suggested carousel by", "suggested post by"
-            )
+    /** A bottom-bar tab button, by its description. */
+    private fun instagramTab(tab: String): ScreenFinder =
+        first { it.desc == tab && it.text.isNullOrEmpty() && it.clickable }
+
+    private val instagramMessagesTab = instagramTab("message")
+
+    /** The bottom-bar [tab] is the open one (and the Messages tab is there to go to). */
+    private fun instagramOnTab(tab: String): ScreenFinder = { screen ->
+        screen.indexOfFirst { it.desc == tab && it.selected && it.clickable }
+            .takeIf { it >= 0 && instagramMessagesTab(screen) != null }
     }
 
-    /**
-     * The Instagram logo at the top of the main feed. A device log shows it as
-     * an unlabelled button around an element described "Instagram Home Feed";
-     * tapping that element taps the button.
-     */
-    private val instagramHomeLogo: ScreenFinder = first {
-        it.desc == "instagram home feed" ||
-            (it.clickable && (it.desc == "instagram" || it.text == "instagram"))
-    }
-
-    /** "Following" in the menu the logo opens. */
-    private val instagramFollowingOption: ScreenFinder = first {
-        it.text == "following" || it.desc == "following"
-    }
+    /** Sends the [tab] page to Messages; if that ever fails, blocks it instead. */
+    private fun instagramTabToMessages(name: String, tab: String): List<Section> = listOf(
+        Section(name = name, detect = instagramOnTab(tab), redirect = listOf(instagramMessagesTab)),
+        Section(name = name, detect = instagramOnTab(tab))
+    )
 
     private val instagram = Feature(
-        sections = listOf(
-            // A suggested post on the main ("For you") feed: switch to the
-            // Following feed, which only has posts from accounts you follow. It
-            // has no logo, so this can't loop once you're there.
+        sections = instagramTabToMessages("Feed", "home") +
+            instagramTabToMessages("Reels", "reels") +
+            instagramTabToMessages("Explore", "search and explore") +
+            // A reel opened from a chat or a profile: watch that one, but swiping
+            // up to the next (algorithm-picked) reel steps back out. (On the
+            // Reels tab itself the rules above already apply.)
             Section(
-                name = "For-you feed",
-                detect = { screen ->
-                    instagramHomeLogo(screen)?.takeIf { instagramSuggestedPost(screen) != null }
-                },
-                redirect = listOf(instagramHomeLogo, instagramFollowingOption)
+                name = "More reels",
+                // The full-screen player ("Reel by x. Double tap to play or
+                // pause"), not grid tiles or feed posts that are also "Reel by …".
+                detect = first { it.labelStartsWith("reel by ") && it.desc?.contains("double tap") == true },
+                onlyFirst = "Just the reel you opened."
             ),
-            // Fallback while the logo is scrolled out of view, or if the switch
-            // ever fails: scroll back so you can't scroll into suggested posts.
-            Section(
-                name = "Suggested posts",
-                detect = instagramSuggestedPost,
-                wall = "That's everything from people you follow."
-            )
-        ),
-        optionLabel = "Following feed only (rest of app works)",
-        summary = "👥 Following feed only · suggested posts hidden"
+        optionLabel = "Messages only: no feed, Reels or Explore",
+        summary = "💬 Messages only · feed, Reels & Explore hidden",
+        covers = listOf(instagramTab("home"), instagramTab("reels"), instagramTab("search and explore"))
     )
 
     private val features = mapOf(

@@ -241,15 +241,39 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             val section = feature.sections.firstOrNull { candidate ->
                 // A redirect that recently couldn't complete steps aside, so the
                 // next matching section (e.g. a wall) handles the screen instead.
-                (failedRedirectUntil["$pkg/${candidate.name}"] ?: 0L) <= nowMs &&
+                (candidate.redirect == null ||
+                    (failedRedirectUntil["$pkg/${candidate.name}"] ?: 0L) <= nowMs) &&
                     candidate.detect(snapshot.nodes) != null
             }
             if (shouldDiag(pkg)) {
                 diag("$pkg: open section = ${section?.name ?: "none"}. Visible elements:\n" + describeScreen(root))
             }
+            trackOnlyFirst(pkg, feature, section, nowMs)
             if (section == null) return
 
             val now = android.os.SystemClock.uptimeMillis()
+            val onlyFirst = section.onlyFirst
+            if (onlyFirst != null) {
+                val index = section.detect(snapshot.nodes) ?: return
+                val node = snapshot.nodes[index]
+                val label = node.desc ?: node.text ?: return
+                val key = "$pkg/${section.name}"
+                val first = firstItems[key]
+                if (first == null) {
+                    firstItems[key] = label
+                    diag("$pkg: ${section.name}: allowing the first one")
+                    return
+                }
+                if (first == label || now < featureQuietUntil) return
+                // Moved on to a different item: step back out of it.
+                featureQuietUntil = now + FEATURE_BLOCK_DEBOUNCE_MS
+                firstItems.remove(key)
+                diag("$pkg: ${section.name}: moved past the first one, stepping back")
+                performGlobalAction(GLOBAL_ACTION_BACK)
+                showWallMessage(onlyFirst)
+                return
+            }
+
             if (now < featureQuietUntil) return
             val redirect = section.redirect
             val wall = section.wall
@@ -290,6 +314,33 @@ class AppBlockerAccessibilityService : AccessibilityService() {
      * to the next step once the app has had a moment to react. If a step's
      * element isn't on screen yet, it's retried a couple of times, then dropped.
      */
+    /** "pkg/section" → the label of the one item an [FeatureBlocks.Section.onlyFirst] section allows. */
+    private val firstItems = HashMap<String, String>()
+    /** "pkg/section" → when that section was last on screen. */
+    private val firstItemsSeenAt = HashMap<String, Long>()
+
+    /**
+     * Forgets the allowed item once its section has been off screen for a
+     * moment, so the next time it's opened (e.g. another reel from a chat) that
+     * item is allowed in turn. A brief gap (a frame while loading) is ignored.
+     */
+    private fun trackOnlyFirst(
+        pkg: String,
+        feature: FeatureBlocks.Feature,
+        current: FeatureBlocks.Section?,
+        now: Long
+    ) {
+        for (s in feature.sections) {
+            if (s.onlyFirst == null) continue
+            val key = "$pkg/${s.name}"
+            if (s === current) {
+                firstItemsSeenAt[key] = now
+            } else if (now - (firstItemsSeenAt[key] ?: 0L) > ONLY_FIRST_RESET_MS) {
+                firstItems.remove(key)
+            }
+        }
+    }
+
     /** "pkg/section" → when a redirect that couldn't complete may be tried again. */
     private val failedRedirectUntil = HashMap<String, Long>()
 
@@ -763,6 +814,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         // Two steps with retries can take ~4s; don't start another meanwhile.
         private const val REDIRECT_QUIET_MS = 4500L
         private const val REDIRECT_FAILURE_BACKOFF_MS = 10L * 60 * 1000
+        private const val ONLY_FIRST_RESET_MS = 1500L
         private const val SCROLL_ANCESTOR_DEPTH = 12
         private const val WALL_QUIET_MS = 700L
         private const val WALL_SECOND_SCROLL_DELAY_MS = 250L
