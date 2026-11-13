@@ -16,6 +16,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -139,6 +140,14 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             .toMap()
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // The keyboard opening or closing: re-fit the covers around it.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            if (coverViews.isNotEmpty() || keyboardTop() != null) {
+                lastForegroundPackage?.takeIf { featurePackages.containsKey(it) }
+                    ?.let { scheduleFeatureScan(it) }
+            }
+            return
+        }
         val pkg = event.packageName?.toString() ?: return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (pkg == packageName) {
@@ -155,6 +164,15 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             }
         }
         if (pkg == packageName) return // never block our own app
+
+        // A tap is the earliest sign a blackout area is about to open or close:
+        // react to it straight away instead of waiting for the screen to redraw.
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
+            val feature = featurePackages[pkg] ?: return
+            if (!isOnBreakFast()) onFeatureClick(pkg, feature, event)
+            scheduleFeatureScan(pkg)
+            return
+        }
 
         // Section blocks: switching tabs inside an app (e.g. to Snapchat's
         // Discover) only fires content-changed events, not window-state ones.
@@ -412,8 +430,50 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     // ---- Covers: hide a button by drawing over it --------------------------
 
-    /** A solid patch: where, and in what colour. */
-    private data class CoverPatch(val rect: Rect, val color: Int)
+    /** A solid patch: where, and in what colour. [blackout] is the index of its blackout area, or -1 for a button. */
+    private data class CoverPatch(val rect: Rect, val color: Int, val blackout: Int = -1)
+
+    /** "pkg/index" → where that blackout area last was, to black it out instantly next time. */
+    private val lastBlackouts = HashMap<String, Rect>()
+    /** pkg → keep the blackout predicted by a tap until then, while the new screen draws. */
+    private val blackoutHoldUntil = HashMap<String, Long>()
+    /** pkg → don't redraw blackouts until then: a tap is leaving the area. */
+    private val blackoutSuppressUntil = HashMap<String, Long>()
+
+    /**
+     * Tapping something that opens a blackout area (e.g. Instagram's Search
+     * tab) blacks it out at once, where it last was. Any other tap closes the
+     * area (the area itself can't be tapped: its patch swallows touches).
+     */
+    private fun onFeatureClick(pkg: String, feature: FeatureBlocks.Feature, event: AccessibilityEvent) {
+        if (feature.blackouts.isEmpty()) return
+        val source = event.source
+        val clicked = FeatureBlocks.ScreenNode(
+            text = (source?.text ?: event.text.joinToString(" ").ifEmpty { null })?.toString()?.trim()?.lowercase(),
+            desc = (source?.contentDescription ?: event.contentDescription)?.toString()?.trim()?.lowercase(),
+            id = source?.viewIdResourceName,
+            clickable = true,
+            selected = source?.isSelected ?: false,
+            focused = source?.isFocused ?: false,
+            showingHint = false,
+            editable = source?.isEditable ?: false
+        )
+        val now = android.os.SystemClock.uptimeMillis()
+        val buttons = coverPatches.filter { it.blackout < 0 }
+        val opened = feature.blackouts.withIndex().firstOrNull { it.value.openedBy?.invoke(clicked) == true }
+        val rect = opened?.let { lastBlackouts["$pkg/${it.index}"] }
+        if (opened != null && rect != null) {
+            blackoutHoldUntil[pkg] = now + BLACKOUT_HOLD_MS
+            blackoutSuppressUntil.remove(pkg)
+            showCover(buttons + CoverPatch(Rect(rect), Color.BLACK, opened.index))
+        } else if (opened == null) {
+            blackoutHoldUntil.remove(pkg)
+            blackoutSuppressUntil[pkg] = now + BLACKOUT_SUPPRESS_MS
+            if (coverPatches.any { it.blackout >= 0 }) {
+                if (buttons.isEmpty()) hideCover() else showCover(buttons)
+            }
+        }
+    }
 
     /** One view per patch, in the same order as [coverPatches]. */
     private val coverViews = ArrayList<View>()
@@ -439,18 +499,53 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             if (rect.left < 0 || rect.right > screenWidth) return
             patches.add(CoverPatch(rect, coverColor()))
         }
-        for (area in feature.blackouts) {
-            val b = area(snapshot.nodes) ?: continue
-            val rect = Rect(b.left, b.top, b.right, b.bottom)
-            if (!rect.isEmpty) patches.add(CoverPatch(rect, Color.BLACK))
+        val now = android.os.SystemClock.uptimeMillis()
+        val suppressed = now < (blackoutSuppressUntil[pkg] ?: 0L)
+        val holding = now < (blackoutHoldUntil[pkg] ?: 0L)
+        for ((i, blackout) in feature.blackouts.withIndex()) {
+            val key = "$pkg/$i"
+            val b = blackout.area(snapshot.nodes)
+            val rect = b?.let { Rect(it.left, it.top, it.right, it.bottom) }?.takeIf { !it.isEmpty }
+            if (rect != null) {
+                lastBlackouts[key] = Rect(rect)
+                blackoutHoldUntil.remove(pkg) // the screen has caught up
+                if (!suppressed) patches.add(CoverPatch(rect, Color.BLACK, i))
+            } else if (holding) {
+                // Tapped into it a moment ago; the new screen isn't drawn yet.
+                coverPatches.firstOrNull { it.blackout == i }?.let { patches.add(it) }
+            }
         }
-        if (patches.isEmpty()) { hideCoverSoon(); return }
+        // Never draw over the keyboard: our patches sit above every window, it
+        // included. Drop the ones underneath it, trim the ones reaching into it.
+        val keyboard = keyboardTop()
+        keyboard?.let { top ->
+            for (i in patches.indices) {
+                val p = patches[i]
+                if (p.rect.bottom > top) patches[i] = p.copy(rect = Rect(p.rect).apply { bottom = top })
+            }
+            patches.removeAll { it.rect.height() <= 0 }
+        }
+        if (patches.isEmpty()) {
+            // Blackouts go at once; button covers get a moment's grace.
+            if (keyboard != null || coverPatches.any { it.blackout >= 0 }) hideCover() else hideCoverSoon()
+            return
+        }
         if (patches != coverPatches) {
             diag("$pkg: covering ${patches.joinToString { it.rect.toShortString() }}")
         }
-        lastCoverRects[pkg] = patches.map { it.copy(rect = Rect(it.rect)) }
+        // Remembered for reopening the app: buttons only, since a blackout area
+        // isn't necessarily the screen the app reopens on.
+        lastCoverRects[pkg] = patches.filter { it.blackout < 0 }.map { it.copy(rect = Rect(it.rect)) }
         showCover(patches)
     }
+
+    /** The top edge of the on-screen keyboard, or null when it isn't showing. */
+    private fun keyboardTop(): Int? = runCatching {
+        windows.filter { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            .map { Rect().also { r -> it.getBoundsInScreen(r) } }
+            .filter { !it.isEmpty }
+            .minOfOrNull { it.top }
+    }.getOrNull()
 
     /**
      * Hides the patches unless something to cover turns up again within a
@@ -817,7 +912,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val BOUNCE_DEBOUNCE_MS = 1500L
 
         // Section-block tuning.
-        private const val FEATURE_SCAN_THROTTLE_MS = 200L
+        private const val FEATURE_SCAN_THROTTLE_MS = 150L
         private const val EMPTY_WINDOW_RETRY_MS = 120L
         private const val COVER_HIDE_GRACE_MS = 250L
         private const val FEATURE_BLOCK_DEBOUNCE_MS = 2000L
@@ -831,6 +926,8 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val REDIRECT_QUIET_MS = 4500L
         private const val REDIRECT_FAILURE_BACKOFF_MS = 10L * 60 * 1000
         private const val ONLY_FIRST_RESET_MS = 1500L
+        private const val BLACKOUT_HOLD_MS = 800L
+        private const val BLACKOUT_SUPPRESS_MS = 400L
         private const val SCROLL_ANCESTOR_DEPTH = 12
         private const val WALL_QUIET_MS = 700L
         private const val WALL_SECOND_SCROLL_DELAY_MS = 250L
