@@ -412,36 +412,49 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     // ---- Covers: hide a button by drawing over it --------------------------
 
-    /** One patch per covered button, in the same order as [coverRects]. */
+    /** A solid patch: where, and in what colour. */
+    private data class CoverPatch(val rect: Rect, val color: Int)
+
+    /** One view per patch, in the same order as [coverPatches]. */
     private val coverViews = ArrayList<View>()
-    private var coverRects: List<Rect> = emptyList()
-    /** Where each app's buttons were last seen, so reopening the app covers them instantly. */
-    private val lastCoverRects = HashMap<String, List<Rect>>()
+    private var coverPatches: List<CoverPatch> = emptyList()
+    /** Where each app's patches last were, so reopening the app covers them instantly. */
+    private val lastCoverRects = HashMap<String, List<CoverPatch>>()
     private val hideCoverRunnable = Runnable { hideCover() }
 
-    /** Puts a cover over each of [feature]'s buttons that's on screen; hides them when none are. */
+    /**
+     * Puts a patch over each of [feature]'s buttons and blackout areas that's on
+     * screen; hides them when none are.
+     */
     private fun updateCover(pkg: String, feature: FeatureBlocks.Feature, snapshot: Snapshot) {
-        if (feature.covers.isEmpty()) return
+        if (feature.covers.isEmpty() && feature.blackouts.isEmpty()) return
         val screenWidth = resources.displayMetrics.widthPixels
-        val rects = ArrayList<Rect>()
+        val patches = ArrayList<CoverPatch>()
         for (finder in feature.covers) {
             val index = finder(snapshot.nodes) ?: continue
             val rect = Rect().also { snapshot.infos[index].getBoundsInScreen(it) }
             if (rect.isEmpty) continue
             // Mid-swipe, a button can be reported partly off screen for a frame;
-            // keep the covers where they are rather than chasing it.
+            // keep the patches where they are rather than chasing it.
             if (rect.left < 0 || rect.right > screenWidth) return
-            rects.add(rect)
+            patches.add(CoverPatch(rect, coverColor()))
         }
-        if (rects.isEmpty()) { hideCoverSoon(); return }
-        if (rects != coverRects) diag("$pkg: covering buttons at ${rects.joinToString { it.toShortString() }}")
-        lastCoverRects[pkg] = rects.map { Rect(it) }
-        showCover(rects)
+        for (area in feature.blackouts) {
+            val b = area(snapshot.nodes) ?: continue
+            val rect = Rect(b.left, b.top, b.right, b.bottom)
+            if (!rect.isEmpty) patches.add(CoverPatch(rect, Color.BLACK))
+        }
+        if (patches.isEmpty()) { hideCoverSoon(); return }
+        if (patches != coverPatches) {
+            diag("$pkg: covering ${patches.joinToString { it.rect.toShortString() }}")
+        }
+        lastCoverRects[pkg] = patches.map { it.copy(rect = Rect(it.rect)) }
+        showCover(patches)
     }
 
     /**
-     * Hides the covers unless a button turns up again within a moment, so a
-     * single frame where the app's bar is missing doesn't make them blink.
+     * Hides the patches unless something to cover turns up again within a
+     * moment, so a single frame where the app's bar is missing doesn't blink.
      */
     private fun hideCoverSoon() {
         if (coverViews.isEmpty()) return
@@ -449,30 +462,31 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         mainHandler.postDelayed(hideCoverRunnable, COVER_HIDE_GRACE_MS)
     }
 
-    private fun showCover(rects: List<Rect>) {
+    private fun showCover(patches: List<CoverPatch>) {
         mainHandler.removeCallbacks(hideCoverRunnable)
-        if (rects == coverRects && coverViews.size == rects.size) return
+        if (patches == coverPatches && coverViews.size == patches.size) return
         val wm = getSystemService(WindowManager::class.java)
         try {
-            // Drop patches no longer needed, then move/add one per button.
-            while (coverViews.size > rects.size) {
+            // Drop views no longer needed, then move/recolour/add one per patch.
+            while (coverViews.size > patches.size) {
                 runCatching { wm.removeView(coverViews.removeAt(coverViews.size - 1)) }
             }
-            rects.forEachIndexed { i, rect ->
-                val params = coverParams(rect)
+            patches.forEachIndexed { i, patch ->
+                val params = coverParams(patch.rect)
                 if (i < coverViews.size) {
+                    coverViews[i].setBackgroundColor(patch.color)
                     wm.updateViewLayout(coverViews[i], params)
                 } else {
                     val view = View(this).apply {
-                        setBackgroundColor(coverColor())
-                        // Swallow every tap so the hidden button can't be pressed.
+                        setBackgroundColor(patch.color)
+                        // Swallow every tap so what's underneath can't be pressed.
                         setOnTouchListener { _, _ -> true }
                     }
                     wm.addView(view, params)
                     coverViews.add(view)
                 }
             }
-            coverRects = rects.map { Rect(it) }
+            coverPatches = patches.map { it.copy(rect = Rect(it.rect)) }
         } catch (t: Throwable) {
             diag("cover failed: $t")
             hideCover()
@@ -503,7 +517,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         val wm = getSystemService(WindowManager::class.java)
         coverViews.forEach { view -> runCatching { wm.removeView(view) } }
         coverViews.clear()
-        coverRects = emptyList()
+        coverPatches = emptyList()
     }
 
     /** Matches the bottom bar: black in dark mode, white in light mode. */
@@ -550,7 +564,9 @@ class AppBlockerAccessibilityService : AccessibilityService() {
                         selected = node.isSelected,
                         focused = node.isFocused,
                         showingHint = node.isShowingHintText,
-                        editable = node.isEditable
+                        editable = node.isEditable,
+                        bounds = Rect().also { node.getBoundsInScreen(it) }
+                            .let { FeatureBlocks.Bounds(it.left, it.top, it.right, it.bottom) }
                     )
                 )
                 infos.add(node)
