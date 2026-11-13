@@ -85,13 +85,20 @@ object FeatureBlocks {
             // The bottom-bar Spotlight button only has "Spotlight" as its
             // description and is never marked selected; the Spotlight page itself
             // shows "Spotlight" as title *text*.
-            Section("Spotlight", first { it.text == "spotlight" })
+            Section("Spotlight", first { it.text == "spotlight" }),
+            // Same pattern assumed for the Map page (not yet seen in a log): its
+            // title is text, its tab button a description. Backup for reaching
+            // it by swiping, since the tab button is covered.
+            Section("Map", first { it.text == "map" })
         ),
-        optionLabel = "Block Discover & Spotlight only (rest of app works)",
-        summary = "🚫 Discover & Spotlight blocked · Spotlight tab hidden",
-        // The Spotlight button in the bottom bar: "Spotlight" only as its
-        // description (the Spotlight page's title has it as text instead).
-        covers = listOf(first { it.desc == "spotlight" && it.text.isNullOrEmpty() && it.clickable })
+        optionLabel = "Block Discover, Spotlight & Map only (rest of app works)",
+        summary = "🚫 Discover, Spotlight & Map blocked · their tabs hidden",
+        // The tab buttons: the label only as a description (the pages' titles
+        // have it as text instead).
+        covers = listOf(
+            first { it.desc == "spotlight" && it.text.isNullOrEmpty() && it.clickable },
+            first { it.desc == "map" && it.text.isNullOrEmpty() && it.clickable }
+        )
     )
 
     // ---- Instagram --------------------------------------------------------
