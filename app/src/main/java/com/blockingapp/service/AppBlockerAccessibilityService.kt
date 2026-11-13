@@ -3,6 +3,7 @@ package com.blockingapp.service
 import android.accessibilityservice.AccessibilityService
 import android.app.NotificationManager
 import android.content.Intent
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -335,7 +336,8 @@ class AppBlockerAccessibilityService : AccessibilityService() {
                         clickable = node.isClickable,
                         selected = node.isSelected,
                         focused = node.isFocused,
-                        showingHint = node.isShowingHintText
+                        showingHint = node.isShowingHintText,
+                        editable = node.isEditable
                     )
                 )
                 infos.add(node)
@@ -386,8 +388,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             val text = node.text?.toString()?.trim()?.take(40)
             val desc = node.contentDescription?.toString()?.trim()?.take(40)
             val hasLabel = !text.isNullOrEmpty() || !desc.isNullOrEmpty()
-            val idOnlyButton = node.viewIdResourceName != null && node.isClickable
-            if (node.isVisibleToUser && (hasLabel || idOnlyButton || node.isScrollable)) {
+            if (node.isVisibleToUser && (hasLabel || node.isClickable || node.isScrollable || node.isEditable)) {
                 val flags = buildList {
                     if (node.isSelected) add("SELECTED")
                     if (node.isChecked) add("CHECKED")
@@ -408,6 +409,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
                     .append(" text=\"").append(text ?: "").append('"')
                     .append(" desc=\"").append(desc ?: "").append('"')
                     .append(" id=").append(node.viewIdResourceName ?: "-")
+                    .append(" at=").append(Rect().also { node.getBoundsInScreen(it) }.toShortString())
                     .append(" ").append(flags.joinToString(","))
                     .append('\n')
                 lines++

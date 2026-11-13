@@ -30,7 +30,9 @@ object FeatureBlocks {
         val selected: Boolean,
         val focused: Boolean,
         /** An empty text field showing its placeholder (e.g. "Search"). */
-        val showingHint: Boolean
+        val showingHint: Boolean,
+        /** A text field. */
+        val editable: Boolean = false
     )
 
     data class Section(
@@ -85,50 +87,80 @@ object FeatureBlocks {
     )
 
     // ---- Instagram --------------------------------------------------------
+    // Instagram hides its view ids from accessibility (every element's id is
+    // null), so these rules use labels and the bottom tab's selected state, which
+    // a device log confirmed Instagram does expose.
 
-    /** The Instagram logo at the top of the home ("For you") feed. */
-    private val instagramHomeLogo: ScreenFinder = first {
-        it.id?.endsWith(":id/title_logo") == true || (it.desc == "instagram" && it.clickable)
+    private fun ScreenNode.labelStartsWith(vararg prefixes: String): Boolean =
+        prefixes.any { p -> text?.startsWith(p) == true || desc?.startsWith(p) == true }
+
+    /** The bottom-bar tab with this description is the selected one. */
+    private fun tabSelected(screen: List<ScreenNode>, tab: String): Boolean =
+        screen.any { it.desc == tab && it.selected }
+
+    /**
+     * A post from an account you don't follow. Each one's media carries a
+     * description like "Suggested Photo by …" / "Suggested Reel by …", and
+     * blocks of them get a "Suggested posts" / "Suggested reels" header.
+     * Deliberately not "Suggested for you" alone: that also labels the
+     * friend-suggestion row.
+     */
+    private val instagramSuggestedPost: ScreenFinder = first {
+        it.text == "suggested posts" || it.text == "suggested reels" ||
+            it.labelStartsWith(
+                "suggested photo by", "suggested reel by", "suggested video by",
+                "suggested carousel by", "suggested post by"
+            )
     }
 
-    /** The search box on the Explore/Search tab. */
-    private val instagramSearchBox: ScreenFinder = first {
-        it.id?.endsWith(":id/action_bar_search_edit_text") == true
+    /** The Instagram logo at the top of the home feed (unconfirmed: not seen in a log yet). */
+    private val instagramHomeLogo: ScreenFinder = first {
+        it.clickable && (it.desc == "instagram" || it.text == "instagram")
+    }
+
+    /** The search box on the Search tab: an editable field, or the "Search" placeholder. */
+    private val instagramSearchBox: ScreenFinder = { screen ->
+        screen.indexOfFirst { it.editable }.takeIf { it >= 0 }
+            ?: screen.indexOfFirst {
+                it.desc != "search and explore" &&
+                    (it.text == "search" || it.desc == "search" || it.labelStartsWith("ask meta ai"))
+            }.takeIf { it >= 0 }
     }
 
     private val instagram = Feature(
         sections = listOf(
-            // Home feed: tap the logo, then "Following" in the menu that opens,
-            // which shows only posts from accounts you follow.
+            // Suggested posts: scroll back so you can't scroll into them. Checked
+            // first so it still works while the home-feed redirect can't find the
+            // logo.
+            Section(
+                name = "Suggested posts",
+                detect = instagramSuggestedPost,
+                wall = "That's everything from people you follow."
+            ),
+            // Home feed: tap the logo, then "Following" in the menu that opens.
+            // Stays inactive until the logo's label is confirmed from a log.
             Section(
                 name = "For-you feed",
                 detect = instagramHomeLogo,
                 redirect = listOf(instagramHomeLogo, first { it.text == "following" })
             ),
-            // Suggested posts from accounts you don't follow, which Instagram adds
-            // under "You're all caught up". Not "Suggested for you": Instagram also
-            // uses that for the friend-suggestion row *between* real posts, and a
-            // wall there would hide your followers' posts.
-            Section(
-                name = "Suggested posts",
-                detect = first { it.text == "suggested posts" || it.text == "suggested reels" },
-                wall = "That's everything from people you follow."
-            ),
-            // Explore grid: shown while the search box is idle. Tapping the box
-            // swaps the grid for the search screen, so searching still works.
+            // Explore grid: on the Search tab while the search box is idle. Tapping
+            // the box swaps the grid for the search screen, so searching works.
             Section(
                 name = "Explore",
                 detect = { screen ->
-                    instagramSearchBox(screen)?.takeIf { i ->
+                    if (!tabSelected(screen, "search and explore")) null
+                    else instagramSearchBox(screen)?.takeIf { i ->
                         val box = screen[i]
-                        !box.focused && (box.text.isNullOrEmpty() || box.showingHint)
+                        !box.focused && (box.text.isNullOrEmpty() || box.showingHint ||
+                            box.text == "search" || box.labelStartsWith("ask meta ai"))
                     }
                 },
                 redirect = listOf(instagramSearchBox)
             )
         ),
-        optionLabel = "Following feed only, no Explore (rest of app works)",
-        summary = "👥 Following feed only · Explore hidden"
+        optionLabel = "No suggested posts, no Explore (rest of app works)",
+        summary = "👥 Suggested posts & Explore hidden"
     )
 
     private val features = mapOf(
