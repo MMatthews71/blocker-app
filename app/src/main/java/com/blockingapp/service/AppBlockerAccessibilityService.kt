@@ -199,7 +199,20 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             val now = android.os.SystemClock.uptimeMillis()
             if (now < featureQuietUntil) return
             val redirect = section.redirect
-            featureQuietUntil = now + if (redirect != null) REDIRECT_QUIET_MS else FEATURE_BLOCK_DEBOUNCE_MS
+            val wall = section.wall
+            featureQuietUntil = now + when {
+                wall != null -> WALL_QUIET_MS
+                redirect != null -> REDIRECT_QUIET_MS
+                else -> FEATURE_BLOCK_DEBOUNCE_MS
+            }
+
+            if (wall != null) {
+                val index = section.detect(snapshot.nodes) ?: return
+                val scrolled = scrollBack(snapshot.infos[index])
+                diag("$pkg: wall at ${section.name}, scrolled back=$scrolled")
+                showWallMessage(wall)
+                return
+            }
 
             if (redirect != null) {
                 diag("$pkg: redirecting away from ${section.name}")
@@ -255,6 +268,34 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         } catch (t: Throwable) {
             // Never let a redirect failure take down the blocker.
         }
+    }
+
+    /** Scrolls the nearest scrollable list containing [node] back (up) a couple of pages. */
+    private fun scrollBack(node: AccessibilityNodeInfo): Boolean {
+        var current: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (current != null && depth <= SCROLL_ANCESTOR_DEPTH) {
+            if (current.isScrollable) {
+                val list = current
+                val ok = list.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                mainHandler.postDelayed({
+                    runCatching { list.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD) }
+                }, WALL_SECOND_SCROLL_DELAY_MS)
+                return ok
+            }
+            current = current.parent
+            depth++
+        }
+        return false
+    }
+
+    private var lastWallMessageAt = 0L
+
+    private fun showWallMessage(message: String) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastWallMessageAt < WALL_MESSAGE_INTERVAL_MS) return
+        lastWallMessageAt = now
+        mainHandler.post { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
     }
 
     /** Clicks [node], or its nearest clickable ancestor when it isn't clickable itself. */
@@ -346,7 +387,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             val desc = node.contentDescription?.toString()?.trim()?.take(40)
             val hasLabel = !text.isNullOrEmpty() || !desc.isNullOrEmpty()
             val idOnlyButton = node.viewIdResourceName != null && node.isClickable
-            if (node.isVisibleToUser && (hasLabel || idOnlyButton)) {
+            if (node.isVisibleToUser && (hasLabel || idOnlyButton || node.isScrollable)) {
                 val flags = buildList {
                     if (node.isSelected) add("SELECTED")
                     if (node.isChecked) add("CHECKED")
@@ -354,6 +395,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
                     if (node.isEditable) add("editable")
                     if (node.isFocused) add("focused")
                     if (node.isShowingHintText) add("hint")
+                    if (node.isScrollable) add("scrollable")
                     var p = node.parent
                     var d = 0
                     while (p != null && d < TAB_ANCESTOR_DEPTH) {
@@ -550,6 +592,10 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val REDIRECT_RETRIES = 2
         // Two steps with retries can take ~4s; don't start another meanwhile.
         private const val REDIRECT_QUIET_MS = 4500L
+        private const val SCROLL_ANCESTOR_DEPTH = 12
+        private const val WALL_QUIET_MS = 700L
+        private const val WALL_SECOND_SCROLL_DELAY_MS = 250L
+        private const val WALL_MESSAGE_INTERVAL_MS = 6000L
 
         private const val DIAG_TAG = "FocusFeature"
         private const val DIAG_INTERVAL_MS = 3000L

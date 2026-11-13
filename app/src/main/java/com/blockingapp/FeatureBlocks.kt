@@ -10,8 +10,9 @@ typealias ScreenFinder = (List<FeatureBlocks.ScreenNode>) -> Int?
  *
  * Each [Section] looks at a snapshot of what's on screen. When it matches, the
  * section is either *blocked* (the app is stepped back and the block screen
- * appears) or *redirected* (we tap through the app for the user, e.g. switching
- * Instagram's home feed to "Following").
+ * appears), *redirected* (we tap through the app for the user, e.g. switching
+ * Instagram's home feed to "Following"), or *walled* (the list is scrolled back
+ * so the user can't scroll into it, e.g. Instagram's suggested posts).
  *
  * Detection reads the app's on-screen labels through the accessibility service,
  * so the rules must match what the app actually shows. When an app update changes
@@ -41,7 +42,13 @@ object FeatureBlocks {
          * Null: block the section. Otherwise tap these elements in order instead,
          * each looked up on the screen as it is at that step.
          */
-        val redirect: List<ScreenFinder>? = null
+        val redirect: List<ScreenFinder>? = null,
+        /**
+         * If set, neither block nor redirect: scroll the list containing the
+         * detected element back up, and show this message. Acts as a wall at the
+         * end of a feed.
+         */
+        val wall: String? = null
     )
 
     data class Feature(
@@ -97,6 +104,15 @@ object FeatureBlocks {
                 name = "For-you feed",
                 detect = instagramHomeLogo,
                 redirect = listOf(instagramHomeLogo, first { it.text == "following" })
+            ),
+            // Suggested posts from accounts you don't follow, which Instagram adds
+            // under "You're all caught up". Not "Suggested for you": Instagram also
+            // uses that for the friend-suggestion row *between* real posts, and a
+            // wall there would hide your followers' posts.
+            Section(
+                name = "Suggested posts",
+                detect = first { it.text == "suggested posts" || it.text == "suggested reels" },
+                wall = "That's everything from people you follow."
             ),
             // Explore grid: shown while the search box is idle. Tapping the box
             // swaps the grid for the search screen, so searching still works.
