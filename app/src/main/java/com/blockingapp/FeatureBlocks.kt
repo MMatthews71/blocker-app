@@ -3,6 +3,9 @@ package com.blockingapp
 /** Picks one element of a screen snapshot; returns its index, or null if absent. */
 typealias ScreenFinder = (List<FeatureBlocks.ScreenNode>) -> Int?
 
+/** Works out an area of the screen from a snapshot, or null if it isn't showing. */
+typealias AreaFinder = (List<FeatureBlocks.ScreenNode>) -> FeatureBlocks.Bounds?
+
 /**
  * Apps where we restrict certain *sections* instead of the whole app (mode
  * [com.blockingapp.data.BlockedApp.MODE_FEATURE]). The rest of the app keeps
@@ -21,6 +24,9 @@ typealias ScreenFinder = (List<FeatureBlocks.ScreenNode>) -> Int?
  */
 object FeatureBlocks {
 
+    /** A rectangle on screen, in pixels. */
+    data class Bounds(val left: Int, val top: Int, val right: Int, val bottom: Int)
+
     /** One visible on-screen element. Text and description are trimmed and lowercased. */
     data class ScreenNode(
         val text: String?,
@@ -33,7 +39,9 @@ object FeatureBlocks {
         /** An empty text field showing its placeholder (e.g. "Search"). */
         val showingHint: Boolean,
         /** A text field. */
-        val editable: Boolean = false
+        val editable: Boolean = false,
+        /** Where it is on screen. */
+        val bounds: Bounds? = null
     )
 
     data class Section(
@@ -70,10 +78,12 @@ object FeatureBlocks {
          * Buttons to hide: while one is on screen, a solid patch is drawn over it
          * that also swallows taps, so the button is effectively gone.
          */
-        val covers: List<ScreenFinder> = emptyList()
+        val covers: List<ScreenFinder> = emptyList(),
+        /** Whole areas to black out (taps swallowed too) while they're showing. */
+        val blackouts: List<AreaFinder> = emptyList()
     ) {
         /** Short name for dialogs and the app list, e.g. "Discover & Spotlight". */
-        val name: String get() = sections.joinToString(" & ") { it.name }
+        val name: String get() = sections.map { it.name }.distinct().joinToString(" & ")
     }
 
     private fun first(match: (ScreenNode) -> Boolean): ScreenFinder = { screen ->
@@ -113,8 +123,8 @@ object FeatureBlocks {
     // ---- Instagram --------------------------------------------------------
     // Messages and search only: every feed in the app is chosen by the
     // algorithm, so the Home and Reels tabs are covered and their pages sent to
-    // Messages. The Search tab stays, but its Explore grid never shows: the
-    // search box is tapped straight away, so you can still look people up.
+    // Messages. The Search tab stays, but its Explore grid is blacked out below
+    // the search box, so you can still look people up.
     // Instagram hides its view ids (all null), so these rules use the bottom
     // tabs' descriptions and selected state, which a device log confirmed.
 
@@ -158,12 +168,18 @@ object FeatureBlocks {
         }
     }
 
+    /** Everything below the idle search box down to the bottom bar: the Explore grid and its topic chips. */
+    private val instagramExploreGridArea: AreaFinder = area@{ screen ->
+        val box = instagramExploreGrid(screen)?.let { screen[it].bounds } ?: return@area null
+        val bottom = screen.filter { it.desc == "home" && it.clickable }.mapNotNull { it.bounds?.top }.minOrNull()
+            ?: screen.mapNotNull { it.bounds?.bottom }.maxOrNull() ?: return@area null
+        val right = screen.mapNotNull { it.bounds?.right }.maxOrNull() ?: return@area null
+        Bounds(0, box.bottom, right, bottom).takeIf { bottom > box.bottom }
+    }
+
     private val instagram = Feature(
         sections = instagramTabToMessages("Feed", "home") +
             instagramTabToMessages("Reels", "reels") +
-            // Explore grid: tap into the search box instead; block if that fails.
-            Section(name = "Explore", detect = instagramExploreGrid, redirect = listOf(instagramSearchBox)) +
-            Section(name = "Explore", detect = instagramExploreGrid) +
             // A reel opened from a chat or a profile: watch that one, but swiping
             // up to the next (algorithm-picked) reel steps back out. (On the
             // Reels tab itself the rules above already apply.)
@@ -175,8 +191,9 @@ object FeatureBlocks {
                 onlyFirst = "Just the reel you opened."
             ),
         optionLabel = "Messages & search only: no feed, Reels or Explore",
-        summary = "💬 Messages & search only · feed, Reels & Explore hidden",
-        covers = listOf(instagramTab("home"), instagramTab("reels"))
+        summary = "💬 Messages & search only · feed & Reels hidden · Explore blacked out",
+        covers = listOf(instagramTab("home"), instagramTab("reels")),
+        blackouts = listOf(instagramExploreGridArea)
     )
 
     private val features = mapOf(
