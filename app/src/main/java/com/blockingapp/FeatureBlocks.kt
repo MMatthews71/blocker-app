@@ -1,49 +1,123 @@
 package com.blockingapp
 
+/** Picks one element of a screen snapshot; returns its index, or null if absent. */
+typealias ScreenFinder = (List<FeatureBlocks.ScreenNode>) -> Int?
+
 /**
- * Apps where we can block certain *sections* instead of the whole app (mode
+ * Apps where we restrict certain *sections* instead of the whole app (mode
  * [com.blockingapp.data.BlockedApp.MODE_FEATURE]). The rest of the app keeps
- * working; when a blocked section shows up on screen, the block screen appears
- * and the normal daily breaks can lift it.
+ * working, and the normal daily breaks lift these restrictions too.
  *
- * Detection reads the app's on-screen text through the accessibility service, so
- * the labels must match what the app actually shows. If an app update renames a
- * section, add the new label here.
+ * Each [Section] looks at a snapshot of what's on screen. When it matches, the
+ * section is either *blocked* (the app is stepped back and the block screen
+ * appears) or *redirected* (we tap through the app for the user, e.g. switching
+ * Instagram's home feed to "Following").
+ *
+ * Detection reads the app's on-screen labels through the accessibility service,
+ * so the rules must match what the app actually shows. When an app update changes
+ * them, use the debug log (Logcat tag "FocusFeature") to see the new labels.
  */
 object FeatureBlocks {
 
-    data class Section(
-        /** Shown on the block screen, e.g. "Spotlight". */
-        val name: String,
-        /**
-         * Matched against a visible element's text or content description, whole
-         * label only (case-insensitive), so a chat message that merely mentions
-         * the word doesn't set it off. Unselected buttons are ignored, since a
-         * button that *leads* to the section isn't the section being open.
-         */
-        val labels: Set<String>,
-        /**
-         * Match only an element's visible *text* (never its content description)
-         * and allow it to be clickable. For a page title whose name also appears
-         * as an always-visible navigation button: Snapchat's bottom bar has a
-         * "Spotlight" button with that name only as its description, while the
-         * Spotlight page itself shows "Spotlight" as title text.
-         */
-        val pageTitle: Boolean = false
+    /** One visible on-screen element. Text and description are trimmed and lowercased. */
+    data class ScreenNode(
+        val text: String?,
+        val desc: String?,
+        /** Full view id, e.g. "com.instagram.android:id/title_logo", or null. */
+        val id: String?,
+        val clickable: Boolean,
+        val selected: Boolean,
+        val focused: Boolean,
+        /** An empty text field showing its placeholder (e.g. "Search"). */
+        val showingHint: Boolean
     )
 
-    data class Feature(val sections: List<Section>) {
-        /** Shown in our UI, e.g. "Discover & Spotlight". */
+    data class Section(
+        /** Shown on the block screen and in the app list, e.g. "Spotlight". */
+        val name: String,
+        /** The element proving this section is open right now, or null. */
+        val detect: ScreenFinder,
+        /**
+         * Null: block the section. Otherwise tap these elements in order instead,
+         * each looked up on the screen as it is at that step.
+         */
+        val redirect: List<ScreenFinder>? = null
+    )
+
+    data class Feature(
+        val sections: List<Section>,
+        /** The choice offered when adding the app in Focus Blocker. */
+        val optionLabel: String,
+        /** What the app list shows for this restriction, e.g. "Discover & Spotlight blocked". */
+        val summary: String
+    ) {
+        /** Short name for dialogs and the app list, e.g. "Discover & Spotlight". */
         val name: String get() = sections.joinToString(" & ") { it.name }
     }
 
-    private val features = mapOf(
-        "com.snapchat.android" to Feature(
-            listOf(
-                Section("Discover", setOf("discover")),
-                Section("Spotlight", setOf("spotlight"), pageTitle = true)
+    private fun first(match: (ScreenNode) -> Boolean): ScreenFinder = { screen ->
+        screen.indexOfFirst(match).takeIf { it >= 0 }
+    }
+
+    // ---- Snapchat ---------------------------------------------------------
+
+    private val snapchat = Feature(
+        sections = listOf(
+            // "Discover" heading on the Stories page. Unselected buttons are
+            // ignored: a button that *leads* there isn't the section being open.
+            Section("Discover", first {
+                (it.text == "discover" || it.desc == "discover") && !(it.clickable && !it.selected)
+            }),
+            // The bottom-bar Spotlight button only has "Spotlight" as its
+            // description and is never marked selected; the Spotlight page itself
+            // shows "Spotlight" as title *text*.
+            Section("Spotlight", first { it.text == "spotlight" })
+        ),
+        optionLabel = "Block Discover & Spotlight only (rest of app works)",
+        summary = "🚫 Discover & Spotlight blocked · rest of app works"
+    )
+
+    // ---- Instagram --------------------------------------------------------
+
+    /** The Instagram logo at the top of the home ("For you") feed. */
+    private val instagramHomeLogo: ScreenFinder = first {
+        it.id?.endsWith(":id/title_logo") == true || (it.desc == "instagram" && it.clickable)
+    }
+
+    /** The search box on the Explore/Search tab. */
+    private val instagramSearchBox: ScreenFinder = first {
+        it.id?.endsWith(":id/action_bar_search_edit_text") == true
+    }
+
+    private val instagram = Feature(
+        sections = listOf(
+            // Home feed: tap the logo, then "Following" in the menu that opens,
+            // which shows only posts from accounts you follow.
+            Section(
+                name = "For-you feed",
+                detect = instagramHomeLogo,
+                redirect = listOf(instagramHomeLogo, first { it.text == "following" })
+            ),
+            // Explore grid: shown while the search box is idle. Tapping the box
+            // swaps the grid for the search screen, so searching still works.
+            Section(
+                name = "Explore",
+                detect = { screen ->
+                    instagramSearchBox(screen)?.takeIf { i ->
+                        val box = screen[i]
+                        !box.focused && (box.text.isNullOrEmpty() || box.showingHint)
+                    }
+                },
+                redirect = listOf(instagramSearchBox)
             )
-        )
+        ),
+        optionLabel = "Following feed only, no Explore (rest of app works)",
+        summary = "👥 Following feed only · Explore hidden"
+    )
+
+    private val features = mapOf(
+        "com.snapchat.android" to snapchat,
+        "com.instagram.android" to instagram
     )
 
     fun forPackage(packageName: String): Feature? = features[packageName]

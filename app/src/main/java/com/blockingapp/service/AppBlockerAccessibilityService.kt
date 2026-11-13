@@ -15,6 +15,7 @@ import com.blockingapp.BlockerRepository
 import com.blockingapp.FeatureBlocks
 import com.blockingapp.FocusApp
 import com.blockingapp.R
+import com.blockingapp.ScreenFinder
 import com.blockingapp.TrustedClock
 import com.blockingapp.UninstallGate
 import com.blockingapp.data.BlockedApp
@@ -44,7 +45,8 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     @Volatile private var featurePackages: Map<String, FeatureBlocks.Feature> = emptyMap()
     private val appLabels = HashMap<String, String>()
     private var lastFeatureScanAt = 0L
-    private var lastFeatureBlockAt = 0L
+    // No new section block/redirect before this uptime (lets the last one finish).
+    private var featureQuietUntil = 0L
 
     // Polling safety net. Window-state events only fire when a window first
     // appears — not while scrolling inside an already-open app. If the process
@@ -173,8 +175,9 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * If [pkg] is showing its blocked section right now, move it off that screen
-     * and show the block screen. Everything else in the app is left alone.
+     * If [pkg] is showing a restricted section right now, either redirect (tap
+     * through the app for the user) or step out of it and show the block screen.
+     * Everything else in the app is left alone.
      */
     private fun checkFeatureBlock(pkg: String) {
         try {
@@ -186,15 +189,23 @@ class AppBlockerAccessibilityService : AccessibilityService() {
                 diagThrottled(pkg, "$pkg: active window belongs to ${root.packageName}")
                 return
             }
-            val section = openSection(root, feature.sections)
+            val snapshot = snapshotScreen(root)
+            val section = feature.sections.firstOrNull { it.detect(snapshot.nodes) != null }
             if (shouldDiag(pkg)) {
                 diag("$pkg: open section = ${section?.name ?: "none"}. Visible elements:\n" + describeScreen(root))
             }
             if (section == null) return
 
             val now = android.os.SystemClock.uptimeMillis()
-            if (now - lastFeatureBlockAt < FEATURE_BLOCK_DEBOUNCE_MS) return
-            lastFeatureBlockAt = now
+            if (now < featureQuietUntil) return
+            val redirect = section.redirect
+            featureQuietUntil = now + if (redirect != null) REDIRECT_QUIET_MS else FEATURE_BLOCK_DEBOUNCE_MS
+
+            if (redirect != null) {
+                diag("$pkg: redirecting away from ${section.name}")
+                runRedirect(pkg, redirect, 0, snapshot, retriesLeft = REDIRECT_RETRIES)
+                return
+            }
 
             // Step the app back out of the section first, so closing the block
             // screen lands the user somewhere usable instead of right back on it.
@@ -209,13 +220,65 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The blocked section currently open on screen, or null. See
-     * [FeatureBlocks.Section] for how each kind of label is matched.
+     * Taps the element [steps][index] finds on the current screen, then moves on
+     * to the next step once the app has had a moment to react. If a step's
+     * element isn't on screen yet, it's retried a couple of times, then dropped.
      */
-    private fun openSection(
-        root: AccessibilityNodeInfo,
-        sections: List<FeatureBlocks.Section>
-    ): FeatureBlocks.Section? {
+    private fun runRedirect(
+        pkg: String,
+        steps: List<ScreenFinder>,
+        index: Int,
+        snapshot: Snapshot?,
+        retriesLeft: Int
+    ) {
+        if (index >= steps.size) return
+        try {
+            val shot = snapshot ?: rootInActiveWindow
+                ?.takeIf { it.packageName?.toString() == pkg }
+                ?.let { snapshotScreen(it) }
+            val target = shot?.let { steps[index](it.nodes) }
+            if (shot == null || target == null) {
+                if (retriesLeft > 0) {
+                    mainHandler.postDelayed({
+                        runRedirect(pkg, steps, index, null, retriesLeft - 1)
+                    }, REDIRECT_STEP_DELAY_MS)
+                } else {
+                    diag("$pkg: redirect step ${index + 1} found nothing to tap; giving up")
+                }
+                return
+            }
+            val tapped = tap(shot.infos[target])
+            diag("$pkg: redirect step ${index + 1} tapped=$tapped")
+            mainHandler.postDelayed({
+                runRedirect(pkg, steps, index + 1, null, REDIRECT_RETRIES)
+            }, REDIRECT_STEP_DELAY_MS)
+        } catch (t: Throwable) {
+            // Never let a redirect failure take down the blocker.
+        }
+    }
+
+    /** Clicks [node], or its nearest clickable ancestor when it isn't clickable itself. */
+    private fun tap(node: AccessibilityNodeInfo): Boolean {
+        if (node.isEditable) node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        var current: AccessibilityNodeInfo? = node
+        var depth = 0
+        while (current != null && depth <= TAP_ANCESTOR_DEPTH) {
+            if (current.isClickable) return current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            current = current.parent
+            depth++
+        }
+        return node.isEditable
+    }
+
+    /** The visible elements on screen, plus the live nodes behind them (same order). */
+    private class Snapshot(
+        val nodes: List<FeatureBlocks.ScreenNode>,
+        val infos: List<AccessibilityNodeInfo>
+    )
+
+    private fun snapshotScreen(root: AccessibilityNodeInfo): Snapshot {
+        val nodes = ArrayList<FeatureBlocks.ScreenNode>()
+        val infos = ArrayList<AccessibilityNodeInfo>()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
         var visited = 0
@@ -223,24 +286,24 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             val node = queue.removeFirst()
             visited++
             if (node.isVisibleToUser) {
-                val text = node.text?.toString()?.trim()?.lowercase()
-                val desc = node.contentDescription?.toString()?.trim()?.lowercase()
-                for (section in sections) {
-                    val open = if (section.pageTitle) {
-                        text != null && text in section.labels
-                    } else {
-                        val matches = (text != null && text in section.labels) ||
-                            (desc != null && desc in section.labels)
-                        matches && !(node.isClickable && !node.isSelected)
-                    }
-                    if (open) return section
-                }
+                nodes.add(
+                    FeatureBlocks.ScreenNode(
+                        text = node.text?.toString()?.trim()?.lowercase(),
+                        desc = node.contentDescription?.toString()?.trim()?.lowercase(),
+                        id = node.viewIdResourceName,
+                        clickable = node.isClickable,
+                        selected = node.isSelected,
+                        focused = node.isFocused,
+                        showingHint = node.isShowingHintText
+                    )
+                )
+                infos.add(node)
             }
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { queue.add(it) }
             }
         }
-        return null
+        return Snapshot(nodes, infos)
     }
 
     // ---- Diagnostics (debug builds only) ------------------------------------
@@ -281,11 +344,16 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             visited++
             val text = node.text?.toString()?.trim()?.take(40)
             val desc = node.contentDescription?.toString()?.trim()?.take(40)
-            if (node.isVisibleToUser && (!text.isNullOrEmpty() || !desc.isNullOrEmpty())) {
+            val hasLabel = !text.isNullOrEmpty() || !desc.isNullOrEmpty()
+            val idOnlyButton = node.viewIdResourceName != null && node.isClickable
+            if (node.isVisibleToUser && (hasLabel || idOnlyButton)) {
                 val flags = buildList {
                     if (node.isSelected) add("SELECTED")
                     if (node.isChecked) add("CHECKED")
                     if (node.isClickable) add("clickable")
+                    if (node.isEditable) add("editable")
+                    if (node.isFocused) add("focused")
+                    if (node.isShowingHintText) add("hint")
                     var p = node.parent
                     var d = 0
                     while (p != null && d < TAB_ANCESTOR_DEPTH) {
@@ -477,6 +545,11 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val FEATURE_BLOCK_LAUNCH_DELAY_MS = 250L
         private const val MAX_FEATURE_NODES_SCANNED = 1500
         private const val TAB_ANCESTOR_DEPTH = 3
+        private const val TAP_ANCESTOR_DEPTH = 5
+        private const val REDIRECT_STEP_DELAY_MS = 700L
+        private const val REDIRECT_RETRIES = 2
+        // Two steps with retries can take ~4s; don't start another meanwhile.
+        private const val REDIRECT_QUIET_MS = 4500L
 
         private const val DIAG_TAG = "FocusFeature"
         private const val DIAG_INTERVAL_MS = 3000L
