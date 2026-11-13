@@ -347,85 +347,98 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     // ---- Covers: hide a button by drawing over it --------------------------
 
-    private var coverView: View? = null
-    private var coverRect: Rect? = null
-    /** Where each app's button was last seen, so reopening the app covers it instantly. */
-    private val lastCoverRects = HashMap<String, Rect>()
+    /** One patch per covered button, in the same order as [coverRects]. */
+    private val coverViews = ArrayList<View>()
+    private var coverRects: List<Rect> = emptyList()
+    /** Where each app's buttons were last seen, so reopening the app covers them instantly. */
+    private val lastCoverRects = HashMap<String, List<Rect>>()
     private val hideCoverRunnable = Runnable { hideCover() }
 
-    /** Shows/moves the cover onto [feature]'s button if it's on screen, else hides it. */
+    /** Puts a cover over each of [feature]'s buttons that's on screen; hides them when none are. */
     private fun updateCover(pkg: String, feature: FeatureBlocks.Feature, snapshot: Snapshot) {
         if (feature.covers.isEmpty()) return
-        val index = feature.covers.firstNotNullOfOrNull { it(snapshot.nodes) }
-        if (index == null) { hideCoverSoon(); return }
-        val rect = Rect().also { snapshot.infos[index].getBoundsInScreen(it) }
-        if (rect.isEmpty) { hideCoverSoon(); return }
-        // Mid-swipe, the button can be reported partly off screen for a frame;
-        // keep the cover where it is rather than chasing it.
         val screenWidth = resources.displayMetrics.widthPixels
-        if (rect.left < 0 || rect.right > screenWidth) return
-        if (rect != coverRect) diag("$pkg: covering button at ${rect.toShortString()}")
-        lastCoverRects[pkg] = Rect(rect)
-        showCover(rect)
+        val rects = ArrayList<Rect>()
+        for (finder in feature.covers) {
+            val index = finder(snapshot.nodes) ?: continue
+            val rect = Rect().also { snapshot.infos[index].getBoundsInScreen(it) }
+            if (rect.isEmpty) continue
+            // Mid-swipe, a button can be reported partly off screen for a frame;
+            // keep the covers where they are rather than chasing it.
+            if (rect.left < 0 || rect.right > screenWidth) return
+            rects.add(rect)
+        }
+        if (rects.isEmpty()) { hideCoverSoon(); return }
+        if (rects != coverRects) diag("$pkg: covering buttons at ${rects.joinToString { it.toShortString() }}")
+        lastCoverRects[pkg] = rects.map { Rect(it) }
+        showCover(rects)
     }
 
     /**
-     * Hides the cover unless the button turns up again within a moment, so a
-     * single frame where the app's bar is missing doesn't make it blink.
+     * Hides the covers unless a button turns up again within a moment, so a
+     * single frame where the app's bar is missing doesn't make them blink.
      */
     private fun hideCoverSoon() {
-        if (coverView == null) return
+        if (coverViews.isEmpty()) return
         mainHandler.removeCallbacks(hideCoverRunnable)
         mainHandler.postDelayed(hideCoverRunnable, COVER_HIDE_GRACE_MS)
     }
 
-    private fun showCover(rect: Rect) {
+    private fun showCover(rects: List<Rect>) {
         mainHandler.removeCallbacks(hideCoverRunnable)
-        if (coverView != null && rect == coverRect) return
+        if (rects == coverRects && coverViews.size == rects.size) return
         val wm = getSystemService(WindowManager::class.java)
-        val params = WindowManager.LayoutParams(
-            rect.width(),
-            rect.height(),
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.OPAQUE
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = rect.left
-            y = rect.top
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            }
-        }
         try {
-            val existing = coverView
-            if (existing == null) {
-                val view = View(this).apply {
-                    setBackgroundColor(coverColor())
-                    // Swallow every tap so the hidden button can't be pressed.
-                    setOnTouchListener { _, _ -> true }
-                }
-                wm.addView(view, params)
-                coverView = view
-            } else {
-                wm.updateViewLayout(existing, params)
+            // Drop patches no longer needed, then move/add one per button.
+            while (coverViews.size > rects.size) {
+                runCatching { wm.removeView(coverViews.removeAt(coverViews.size - 1)) }
             }
-            coverRect = Rect(rect)
+            rects.forEachIndexed { i, rect ->
+                val params = coverParams(rect)
+                if (i < coverViews.size) {
+                    wm.updateViewLayout(coverViews[i], params)
+                } else {
+                    val view = View(this).apply {
+                        setBackgroundColor(coverColor())
+                        // Swallow every tap so the hidden button can't be pressed.
+                        setOnTouchListener { _, _ -> true }
+                    }
+                    wm.addView(view, params)
+                    coverViews.add(view)
+                }
+            }
+            coverRects = rects.map { Rect(it) }
         } catch (t: Throwable) {
             diag("cover failed: $t")
             hideCover()
         }
     }
 
+    private fun coverParams(rect: Rect) = WindowManager.LayoutParams(
+        rect.width(),
+        rect.height(),
+        WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+        PixelFormat.OPAQUE
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        x = rect.left
+        y = rect.top
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+    }
+
     private fun hideCover() {
         mainHandler.removeCallbacks(hideCoverRunnable)
-        val view = coverView ?: return
-        runCatching { getSystemService(WindowManager::class.java).removeView(view) }
-        coverView = null
-        coverRect = null
+        if (coverViews.isEmpty()) return
+        val wm = getSystemService(WindowManager::class.java)
+        coverViews.forEach { view -> runCatching { wm.removeView(view) } }
+        coverViews.clear()
+        coverRects = emptyList()
     }
 
     /** Matches the bottom bar: black in dark mode, white in light mode. */
