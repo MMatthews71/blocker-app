@@ -209,13 +209,8 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * The blocked section currently open on screen, or null. A section is open
-     * when a visible element's text or content description is exactly one of its
-     * labels, and:
-     *  - for a normal section (e.g. the "Discover" heading): the element isn't an
-     *    unselected button, since a button that *leads* there isn't the section;
-     *  - for a tab section (e.g. "Spotlight" in the bottom bar, always visible):
-     *    the tab, or its clickable container, is the selected one.
+     * The blocked section currently open on screen, or null. See
+     * [FeatureBlocks.Section] for how each kind of label is matched.
      */
     private fun openSection(
         root: AccessibilityNodeInfo,
@@ -231,13 +226,12 @@ class AppBlockerAccessibilityService : AccessibilityService() {
                 val text = node.text?.toString()?.trim()?.lowercase()
                 val desc = node.contentDescription?.toString()?.trim()?.lowercase()
                 for (section in sections) {
-                    val matches = (text != null && text in section.labels) ||
-                        (desc != null && desc in section.labels)
-                    if (!matches) continue
-                    val open = if (section.isTab) {
-                        isSelectedTab(node)
+                    val open = if (section.pageTitle) {
+                        text != null && text in section.labels
                     } else {
-                        !(node.isClickable && !node.isSelected)
+                        val matches = (text != null && text in section.labels) ||
+                            (desc != null && desc in section.labels)
+                        matches && !(node.isClickable && !node.isSelected)
                     }
                     if (open) return section
                 }
@@ -315,22 +309,6 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         return sb.toString()
     }
 
-    /**
-     * Whether [node] belongs to the selected tab: it, or one of its nearest
-     * ancestors (tab labels often sit inside a clickable container), is marked
-     * selected/checked. If the app doesn't expose that state this returns false,
-     * so the tab is never blocked by mistake rather than blocking the whole app.
-     */
-    private fun isSelectedTab(node: AccessibilityNodeInfo): Boolean {
-        var current: AccessibilityNodeInfo? = node
-        var depth = 0
-        while (current != null && depth <= TAB_ANCESTOR_DEPTH) {
-            if (current.isSelected || current.isChecked) return true
-            current = current.parent
-            depth++
-        }
-        return false
-    }
 
     private fun appLabel(pkg: String): String = appLabels.getOrPut(pkg) {
         runCatching {
