@@ -379,7 +379,7 @@
                 android:layout_height="wrap_content"
                 android:paddingHorizontal="16dp"
                 android:paddingBottom="8dp"
-                android:text="Tap an app to block or unblock it. Snapchat can block just Discover."
+                android:text="Tap an app to block or unblock it. Snapchat can block just Discover &amp; Spotlight."
                 android:textSize="13sp"
                 android:textColor="@color/text_secondary" />
 

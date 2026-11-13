@@ -1,33 +1,45 @@
 package com.blockingapp
 
 /**
- * Apps where we can block one *section* instead of the whole app (mode
+ * Apps where we can block certain *sections* instead of the whole app (mode
  * [com.blockingapp.data.BlockedApp.MODE_FEATURE]). The rest of the app keeps
- * working; when the section shows up on screen, the block screen appears and
- * the normal daily breaks can lift it.
+ * working; when a blocked section shows up on screen, the block screen appears
+ * and the normal daily breaks can lift it.
  *
  * Detection reads the app's on-screen text through the accessibility service, so
- * [screenLabels] must match what the app actually shows. If an app update renames
- * the section, add the new label here.
+ * the labels must match what the app actually shows. If an app update renames a
+ * section, add the new label here.
  */
 object FeatureBlocks {
 
-    data class Feature(
-        /** Shown in our UI, e.g. "Discover". */
+    data class Section(
+        /** Shown on the block screen, e.g. "Spotlight". */
         val name: String,
         /**
-         * The section counts as open when a visible element's text or content
-         * description *equals* one of these (case-insensitive). We match the whole
-         * label, not a substring, so a chat message that only mentions the word
-         * doesn't set it off.
+         * Matched against a visible element's text or content description, whole
+         * label only (case-insensitive), so a chat message that merely mentions
+         * the word doesn't set it off.
          */
-        val screenLabels: Set<String>
+        val labels: Set<String>,
+        /**
+         * True when the label is a navigation tab that's always on screen (e.g.
+         * Snapchat's bottom bar). Then it only counts when that tab is the
+         * *selected* one; otherwise the whole app would be blocked.
+         */
+        val isTab: Boolean = false
     )
+
+    data class Feature(val sections: List<Section>) {
+        /** Shown in our UI, e.g. "Discover & Spotlight". */
+        val name: String get() = sections.joinToString(" & ") { it.name }
+    }
 
     private val features = mapOf(
         "com.snapchat.android" to Feature(
-            name = "Discover",
-            screenLabels = setOf("discover")
+            listOf(
+                Section("Discover", setOf("discover")),
+                Section("Spotlight", setOf("spotlight"), isTab = true)
+            )
         )
     )
 
