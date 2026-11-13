@@ -3,7 +3,14 @@ package com.blockingapp.service
 import android.accessibilityservice.AccessibilityService
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.Color
+import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.os.Build
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -133,6 +140,13 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val pkg = event.packageName?.toString() ?: return
+        // A new window from another app (our block screen, the notification
+        // shade, a different app) means the covered button isn't showing.
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            !featurePackages.containsKey(pkg)
+        ) {
+            hideCover()
+        }
         if (pkg == packageName) return // never block our own app
 
         // Section blocks: switching tabs inside an app (e.g. to Snapchat's
@@ -182,15 +196,21 @@ class AppBlockerAccessibilityService : AccessibilityService() {
      */
     private fun checkFeatureBlock(pkg: String) {
         try {
-            if (isOnBreakFast()) { diagThrottled(pkg, "$pkg: skipped, on a break"); return }
-            val feature = featurePackages[pkg] ?: return
+            if (isOnBreakFast()) {
+                hideCover()
+                diagThrottled(pkg, "$pkg: skipped, on a break")
+                return
+            }
+            val feature = featurePackages[pkg] ?: run { hideCover(); return }
             val root = rootInActiveWindow
             if (root == null) { diagThrottled(pkg, "$pkg: no window content available"); return }
             if (root.packageName?.toString() != pkg) {
+                hideCover()
                 diagThrottled(pkg, "$pkg: active window belongs to ${root.packageName}")
                 return
             }
             val snapshot = snapshotScreen(root)
+            updateCover(pkg, feature, snapshot)
             val section = feature.sections.firstOrNull { it.detect(snapshot.nodes) != null }
             if (shouldDiag(pkg)) {
                 diag("$pkg: open section = ${section?.name ?: "none"}. Visible elements:\n" + describeScreen(root))
@@ -297,6 +317,74 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         if (now - lastWallMessageAt < WALL_MESSAGE_INTERVAL_MS) return
         lastWallMessageAt = now
         mainHandler.post { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
+    }
+
+    // ---- Covers: hide a button by drawing over it --------------------------
+
+    private var coverView: View? = null
+    private var coverRect: Rect? = null
+
+    /** Shows/moves the cover onto [feature]'s button if it's on screen, else hides it. */
+    private fun updateCover(pkg: String, feature: FeatureBlocks.Feature, snapshot: Snapshot) {
+        val index = feature.covers.firstNotNullOfOrNull { it(snapshot.nodes) }
+        if (index == null) { hideCover(); return }
+        val rect = Rect().also { snapshot.infos[index].getBoundsInScreen(it) }
+        if (rect.isEmpty) { hideCover(); return }
+        if (rect != coverRect) diag("$pkg: covering button at ${rect.toShortString()}")
+        showCover(rect)
+    }
+
+    private fun showCover(rect: Rect) {
+        if (coverView != null && rect == coverRect) return
+        val wm = getSystemService(WindowManager::class.java)
+        val params = WindowManager.LayoutParams(
+            rect.width(),
+            rect.height(),
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.OPAQUE
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = rect.left
+            y = rect.top
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        try {
+            val existing = coverView
+            if (existing == null) {
+                val view = View(this).apply {
+                    setBackgroundColor(coverColor())
+                    // Swallow every tap so the hidden button can't be pressed.
+                    setOnTouchListener { _, _ -> true }
+                }
+                wm.addView(view, params)
+                coverView = view
+            } else {
+                wm.updateViewLayout(existing, params)
+            }
+            coverRect = Rect(rect)
+        } catch (t: Throwable) {
+            diag("cover failed: $t")
+            hideCover()
+        }
+    }
+
+    private fun hideCover() {
+        val view = coverView ?: return
+        runCatching { getSystemService(WindowManager::class.java).removeView(view) }
+        coverView = null
+        coverRect = null
+    }
+
+    /** Matches the bottom bar: black in dark mode, white in light mode. */
+    private fun coverColor(): Int {
+        val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return if (night == Configuration.UI_MODE_NIGHT_YES) Color.BLACK else Color.WHITE
     }
 
     /** Clicks [node], or its nearest clickable ancestor when it isn't clickable itself. */
@@ -495,6 +583,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             checkFeatureBlock(live)
             return
         }
+        hideCover()
         if (live != null && FeatureBlocks.forPackage(live) != null) {
             diagThrottled(
                 live,
@@ -548,6 +637,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     /** Called by BlockActivity the moment a break is confirmed, before finish(). */
     fun notifyBreakStarted(breakEndsAt: Long) {
         inMemoryBreakEndsAt = breakEndsAt
+        mainHandler.post { hideCover() } // breaks lift covers too
 
         // When the break expires, re-check whatever is in the foreground.
         val delay = breakEndsAt - TrustedClock.now(this)
@@ -566,6 +656,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        hideCover()
         scope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         instance = null
