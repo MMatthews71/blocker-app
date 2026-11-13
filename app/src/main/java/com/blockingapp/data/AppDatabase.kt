@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [BlockedApp::class, DailyFocusState::class],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -43,10 +43,11 @@ abstract class AppDatabase : RoomDatabase() {
          * still exists and filling the rest with defaults. Covers:
          *  - v4/v5/v6: some installs came from an unpublished branch with an
          *    unknown layout; rebuild rather than crash or wipe the block list.
-         *  - v7 -> v8: music limiting was removed — drop music-limited entries
+         *  - v7: music limiting was removed — drop music-limited entries
          *    (they become unblocked) and the musicMsUsed column.
+         *  - v8 -> v9 also applies [switchSnapchatToDiscoverOnly].
          */
-        private fun rebuildMigration(from: Int) = object : Migration(from, 8) {
+        private fun rebuildMigration(from: Int) = object : Migration(from, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 // Music limiting no longer exists: those apps are simply unblocked.
                 // Done before the rebuild, which turns unknown modes into BLOCK.
@@ -81,6 +82,25 @@ abstract class AppDatabase : RoomDatabase() {
                         "resetsAt" to "0"
                     )
                 )
+                switchSnapchatToDiscoverOnly(db)
+            }
+        }
+
+        /**
+         * One-time switch requested by the owner: Snapchat was fully blocked and
+         * couldn't be changed to "Discover only" without waiting a day for the
+         * unblock. Runs once, as part of the upgrade to v9, and never again.
+         */
+        private fun switchSnapchatToDiscoverOnly(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "UPDATE `blocked_apps` SET `mode` = 'FEATURE', `pendingRemoval` = 0 " +
+                    "WHERE `packageName` = 'com.snapchat.android'"
+            )
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                switchSnapchatToDiscoverOnly(db)
             }
         }
 
@@ -148,7 +168,7 @@ abstract class AppDatabase : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
                         rebuildMigration(4), rebuildMigration(5), rebuildMigration(6),
-                        rebuildMigration(7)
+                        rebuildMigration(7), MIGRATION_8_9
                     )
                     // Installing an older build over a newer one must never leave
                     // the blocker in a crash loop; start fresh instead.
