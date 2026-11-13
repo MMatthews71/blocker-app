@@ -18,15 +18,18 @@ object FeatureBlocks {
         /**
          * Matched against a visible element's text or content description, whole
          * label only (case-insensitive), so a chat message that merely mentions
-         * the word doesn't set it off.
+         * the word doesn't set it off. Unselected buttons are ignored, since a
+         * button that *leads* to the section isn't the section being open.
          */
         val labels: Set<String>,
         /**
-         * True when the label is a navigation tab that's always on screen (e.g.
-         * Snapchat's bottom bar). Then it only counts when that tab is the
-         * *selected* one; otherwise the whole app would be blocked.
+         * Match only an element's visible *text* (never its content description)
+         * and allow it to be clickable. For a page title whose name also appears
+         * as an always-visible navigation button: Snapchat's bottom bar has a
+         * "Spotlight" button with that name only as its description, while the
+         * Spotlight page itself shows "Spotlight" as title text.
          */
-        val isTab: Boolean = false
+        val pageTitle: Boolean = false
     )
 
     data class Feature(val sections: List<Section>) {
@@ -38,7 +41,7 @@ object FeatureBlocks {
         "com.snapchat.android" to Feature(
             listOf(
                 Section("Discover", setOf("discover")),
-                Section("Spotlight", setOf("spotlight"), isTab = true)
+                Section("Spotlight", setOf("spotlight"), pageTitle = true)
             )
         )
     )
