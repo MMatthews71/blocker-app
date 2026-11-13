@@ -101,8 +101,8 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             mainHandler.post { checkAndBlockForeground() }
             mainHandler.postDelayed(pollRunnable, POLL_INTERVAL_MS)
 
-            // Only full-block apps trigger the block screen; music-limited apps
-            // stay browsable (their playback is capped by the media service).
+            // Only full-block apps trigger the block screen; section-blocked apps
+            // stay usable and are handled by checkFeatureBlock().
             repository.blockedAppsFlow
                 .onEach { apps ->
                     blockedPackages = apps

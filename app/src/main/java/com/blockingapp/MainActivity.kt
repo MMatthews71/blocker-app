@@ -76,10 +76,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        binding.btnEnableNotificationListener.setOnClickListener {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-        }
-
         binding.btnEnableNotifications.setOnClickListener { enableNotifications() }
 
         binding.btnEnableOverlay.setOnClickListener {
@@ -111,32 +107,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         viewModel.dailyState.observe(this) { updateStatusText() }
-
-        setupMusicLimitSlider()
-    }
-
-    private fun setupMusicLimitSlider() {
-        val current = MusicSettings.budgetMinutes(this)
-        // Set the value before attaching the listener so init doesn't fire it.
-        binding.sliderMusicLimit.value = current.toFloat()
-        updateMusicLimitLabel(current)
-        binding.sliderMusicLimit.addOnChangeListener { _, value, _ ->
-            val minutes = value.toInt()
-            MusicSettings.setBudgetMinutes(this, minutes)
-            updateMusicLimitLabel(minutes)
-            updateStatusText()
-        }
-    }
-
-    private fun updateMusicLimitLabel(minutes: Int) {
-        binding.tvMusicLimitLabel.text = "Daily music limit: ${formatMinutes(minutes)}"
-    }
-
-    private fun formatMinutes(minutes: Int): String = when {
-        minutes <= 0 -> "None (music blocked)"
-        minutes < 60 -> "$minutes min"
-        minutes % 60 == 0 -> "${minutes / 60}h"
-        else -> "${minutes / 60}h ${minutes % 60}m"
     }
 
     private fun updateStatusText() {
@@ -144,18 +114,14 @@ class MainActivity : AppCompatActivity() {
         val used = state.breaksUsed
         val remaining = BlockerRepository.MAX_BREAKS - used
         val breakMins = BlockerRepository.BREAK_DURATION_MS / 60000
-        val musicUsedMin = state.musicMsUsed / 60000
-        val musicTotalMin = MusicSettings.budgetMinutes(this)
         binding.tvBreakStatus.text =
-            "$used / ${BlockerRepository.MAX_BREAKS} breaks used today  •  $remaining remaining  •  ${breakMins}-min each" +
-                "\n🎵 Music: $musicUsedMin / $musicTotalMin min used today"
+            "$used / ${BlockerRepository.MAX_BREAKS} breaks used today  •  $remaining remaining  •  ${breakMins}-min each"
     }
 
     private fun onAppTapped(app: AppInfo) {
         when {
             app.isPendingRemoval -> showReblockDialog(app)
             app.isBlocked -> showUnblockConfirmation(app)
-            app.isMusicLimited -> showUnblockConfirmation(app)
             app.blockedFeature != null -> showUnblockConfirmation(app)
             else -> showAddModeDialog(app)
         }
@@ -169,7 +135,6 @@ class MainActivity : AppCompatActivity() {
                 add("Block ${feature.name} only (rest of app works)" to BlockedApp.MODE_FEATURE)
             }
             add("Block app entirely" to BlockedApp.MODE_BLOCK)
-            add("Limit music to 1 hour/day" to BlockedApp.MODE_MUSIC)
         }
         MaterialAlertDialogBuilder(this)
             .setTitle(app.name)
@@ -183,17 +148,14 @@ class MainActivity : AppCompatActivity() {
     private fun showUnblockConfirmation(app: AppInfo) {
         val feature = app.blockedFeature
         val title = when {
-            app.isMusicLimited -> "Remove music limit on ${app.name}?"
             feature != null -> "Unblock ${app.name} $feature?"
             else -> "Unblock ${app.name}?"
         }
         val pendingNote = when {
-            app.isMusicLimited -> "(stays limited until tomorrow)"
             feature != null -> "($feature stays blocked until tomorrow)"
             else -> "(app stays blocked until tomorrow)"
         }
         val finalNote = when {
-            app.isMusicLimited -> "${app.name}'s music stays limited until tomorrow."
             feature != null -> "${app.name} $feature will stay blocked until tomorrow."
             else -> "${app.name} will stay blocked until tomorrow."
         }
@@ -240,7 +202,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         refreshAccessibilityStatus()
-        refreshNotificationListenerStatus()
         refreshNotificationsStatus()
         refreshOverlayStatus()
         refreshBatteryStatus()
@@ -378,11 +339,6 @@ class MainActivity : AppCompatActivity() {
         binding.cardSetup.visibility = if (enabled) View.GONE else View.VISIBLE
     }
 
-    private fun refreshNotificationListenerStatus() {
-        val enabled = isNotificationListenerEnabled()
-        binding.cardNotificationListener.visibility = if (enabled) View.GONE else View.VISIBLE
-    }
-
     private fun refreshNotificationsStatus() {
         val enabled = NotificationManagerCompat.from(this).areNotificationsEnabled()
         binding.cardNotifications.visibility = if (enabled) View.GONE else View.VISIBLE
@@ -442,15 +398,6 @@ class MainActivity : AppCompatActivity() {
                 Uri.parse("package:$packageName")
             )
         )
-    }
-
-    private fun isNotificationListenerEnabled(): Boolean {
-        val target = "$packageName/com.blockingapp.service.MediaBlockerNotificationListenerService"
-        val enabled = Settings.Secure.getString(
-            contentResolver,
-            "enabled_notification_listeners"
-        ) ?: return false
-        return enabled.split(":").any { it.equals(target, ignoreCase = true) }
     }
 
     companion object {

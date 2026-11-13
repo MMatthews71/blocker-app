@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [BlockedApp::class, DailyFocusState::class],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,14 +39,20 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * Some installs were built from an unpublished branch that reached schema
-         * versions 5 and 6 with an unknown layout. Rather than crash or wipe the
-         * user's block list, rebuild both tables into the current shape, keeping
-         * every column that still exists and filling the rest with defaults.
-         * Also covers this codebase's own v4.
+         * Rebuilds both tables into the current shape, keeping every column that
+         * still exists and filling the rest with defaults. Covers:
+         *  - v4/v5/v6: some installs came from an unpublished branch with an
+         *    unknown layout; rebuild rather than crash or wipe the block list.
+         *  - v7 -> v8: music limiting was removed — drop music-limited entries
+         *    (they become unblocked) and the musicMsUsed column.
          */
-        private fun rebuildMigration(from: Int) = object : Migration(from, 7) {
+        private fun rebuildMigration(from: Int) = object : Migration(from, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
+                // Music limiting no longer exists: those apps are simply unblocked.
+                // Done before the rebuild, which turns unknown modes into BLOCK.
+                if (hasColumn(db, "blocked_apps", "mode")) {
+                    db.execSQL("DELETE FROM `blocked_apps` WHERE `mode` = 'MUSIC'")
+                }
                 rebuildTable(
                     db, "blocked_apps",
                     "(`packageName` TEXT NOT NULL, `pendingRemoval` INTEGER NOT NULL, " +
@@ -59,24 +65,35 @@ abstract class AppDatabase : RoomDatabase() {
                         "mode" to "'BLOCK'"
                     ),
                     transforms = mapOf(
-                        "mode" to "CASE WHEN `mode` IN ('BLOCK','MUSIC','FEATURE') THEN `mode` ELSE 'BLOCK' END"
+                        "mode" to "CASE WHEN `mode` IN ('BLOCK','FEATURE') THEN `mode` ELSE 'BLOCK' END"
                     )
                 )
                 rebuildTable(
                     db, "daily_focus_state",
                     "(`id` INTEGER NOT NULL, `dateString` TEXT NOT NULL, `breaksUsed` INTEGER NOT NULL, " +
-                        "`breakEndsAt` INTEGER NOT NULL, `musicMsUsed` INTEGER NOT NULL, " +
-                        "`resetsAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+                        "`breakEndsAt` INTEGER NOT NULL, `resetsAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`))",
                     listOf(
                         "id" to "1",
                         "dateString" to "''",
                         "breaksUsed" to "0",
                         "breakEndsAt" to "0",
-                        "musicMsUsed" to "0",
                         "resetsAt" to "0"
                     )
                 )
             }
+        }
+
+        private fun hasColumn(db: SupportSQLiteDatabase, table: String, column: String): Boolean =
+            columnsOf(db, table).contains(column)
+
+        private fun columnsOf(db: SupportSQLiteDatabase, table: String): Set<String> {
+            val names = HashSet<String>()
+            db.query("PRAGMA table_info(`$table`)").use { c ->
+                val nameIdx = c.getColumnIndex("name")
+                while (c.moveToNext()) names.add(c.getString(nameIdx))
+            }
+            return names
         }
 
         /**
@@ -92,11 +109,7 @@ abstract class AppDatabase : RoomDatabase() {
             columns: List<Pair<String, String?>>,
             transforms: Map<String, String> = emptyMap()
         ) {
-            val existing = HashSet<String>()
-            db.query("PRAGMA table_info(`$table`)").use { c ->
-                val nameIdx = c.getColumnIndex("name")
-                while (c.moveToNext()) existing.add(c.getString(nameIdx))
-            }
+            val existing = columnsOf(db, table)
 
             val newTable = "${table}_new"
             db.execSQL("DROP TABLE IF EXISTS `$newTable`")
@@ -134,7 +147,8 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4,
-                        rebuildMigration(4), rebuildMigration(5), rebuildMigration(6)
+                        rebuildMigration(4), rebuildMigration(5), rebuildMigration(6),
+                        rebuildMigration(7)
                     )
                     // Installing an older build over a newer one must never leave
                     // the blocker in a crash loop; start fresh instead.

@@ -45,10 +45,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             name = resolveInfo.loadLabel(pm).toString(),
                             packageName = pkg,
                             icon = resolveInfo.loadIcon(pm),
-                            // "Blocked" = full app block only; music/feature limits are separate states.
+                            // "Blocked" = full app block only; a section block is shown separately.
                             isBlocked = mode == BlockedApp.MODE_BLOCK,
                             isPendingRemoval = entry?.pendingRemoval == true,
-                            isMusicLimited = mode == BlockedApp.MODE_MUSIC,
                             blockedFeature = if (mode == BlockedApp.MODE_FEATURE) {
                                 FeatureBlocks.forPackage(pkg)?.name ?: "Section"
                             } else null
