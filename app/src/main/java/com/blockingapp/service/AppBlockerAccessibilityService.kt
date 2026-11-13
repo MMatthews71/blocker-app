@@ -8,6 +8,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.blockingapp.BlockerRepository
@@ -94,8 +95,15 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         // so no window events slip through while the Flow emits its first value.
         scope.launch {
             blockedPackages = repository.getBlockModePackages().toSet()
-            featurePackages = featureMap(repository.getAllBlockedApps())
+            val allApps = repository.getAllBlockedApps()
+            featurePackages = featureMap(allApps)
             inMemoryBreakEndsAt = repository.getDailyState().breakEndsAt
+            diag(
+                "service started. blocked apps: " +
+                    allApps.joinToString { "${it.packageName}=${it.mode}" } +
+                    " | section-blocked: ${featurePackages.keys}" +
+                    " | on break: ${isOnBreakFast()}"
+            )
 
             // Check immediately, then start the polling safety net.
             mainHandler.post { checkAndBlockForeground() }
@@ -170,11 +178,19 @@ class AppBlockerAccessibilityService : AccessibilityService() {
      */
     private fun checkFeatureBlock(pkg: String) {
         try {
-            if (isOnBreakFast()) return
+            if (isOnBreakFast()) { diagThrottled(pkg, "$pkg: skipped, on a break"); return }
             val feature = featurePackages[pkg] ?: return
-            val root = rootInActiveWindow ?: return
-            if (root.packageName?.toString() != pkg) return
-            val section = openSection(root, feature.sections) ?: return
+            val root = rootInActiveWindow
+            if (root == null) { diagThrottled(pkg, "$pkg: no window content available"); return }
+            if (root.packageName?.toString() != pkg) {
+                diagThrottled(pkg, "$pkg: active window belongs to ${root.packageName}")
+                return
+            }
+            val section = openSection(root, feature.sections)
+            if (shouldDiag(pkg)) {
+                diag("$pkg: open section = ${section?.name ?: "none"}. Visible elements:\n" + describeScreen(root))
+            }
+            if (section == null) return
 
             val now = android.os.SystemClock.uptimeMillis()
             if (now - lastFeatureBlockAt < FEATURE_BLOCK_DEBOUNCE_MS) return
@@ -231,6 +247,72 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             }
         }
         return null
+    }
+
+    // ---- Diagnostics (debug builds only) ------------------------------------
+    // Filter Logcat by the tag "FocusFeature" to see what the section blocker
+    // sees inside an app. Throttled so it doesn't flood the log.
+
+    private val isDebugBuild by lazy {
+        (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    }
+    private val lastDiagAt = HashMap<String, Long>()
+
+    private fun diag(message: String) {
+        if (isDebugBuild) Log.d(DIAG_TAG, message)
+    }
+
+    private fun shouldDiag(key: String): Boolean {
+        if (!isDebugBuild) return false
+        val now = android.os.SystemClock.uptimeMillis()
+        val last = lastDiagAt[key] ?: 0L
+        if (now - last < DIAG_INTERVAL_MS) return false
+        lastDiagAt[key] = now
+        return true
+    }
+
+    private fun diagThrottled(key: String, message: String) {
+        if (shouldDiag(key)) diag(message)
+    }
+
+    /** One line per visible element with text/description and its state flags. */
+    private fun describeScreen(root: AccessibilityNodeInfo): String {
+        val sb = StringBuilder()
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, Int>>()
+        queue.add(root to 0)
+        var visited = 0
+        var lines = 0
+        while (queue.isNotEmpty() && visited < MAX_FEATURE_NODES_SCANNED && lines < DIAG_MAX_LINES) {
+            val (node, depth) = queue.removeFirst()
+            visited++
+            val text = node.text?.toString()?.trim()?.take(40)
+            val desc = node.contentDescription?.toString()?.trim()?.take(40)
+            if (node.isVisibleToUser && (!text.isNullOrEmpty() || !desc.isNullOrEmpty())) {
+                val flags = buildList {
+                    if (node.isSelected) add("SELECTED")
+                    if (node.isChecked) add("CHECKED")
+                    if (node.isClickable) add("clickable")
+                    var p = node.parent
+                    var d = 0
+                    while (p != null && d < TAB_ANCESTOR_DEPTH) {
+                        if (p.isSelected || p.isChecked) { add("parent${d + 1}-selected"); break }
+                        p = p.parent
+                        d++
+                    }
+                }
+                sb.append("  d=").append(depth)
+                    .append(" text=\"").append(text ?: "").append('"')
+                    .append(" desc=\"").append(desc ?: "").append('"')
+                    .append(" id=").append(node.viewIdResourceName ?: "-")
+                    .append(" ").append(flags.joinToString(","))
+                    .append('\n')
+                lines++
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it to depth + 1) }
+            }
+        }
+        return sb.toString()
     }
 
     /**
@@ -323,6 +405,13 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             checkFeatureBlock(live)
             return
         }
+        if (live != null && FeatureBlocks.forPackage(live) != null) {
+            diagThrottled(
+                live,
+                "$live is open but has no section block " +
+                    "(full block: ${blockedPackages.contains(live)}). Set it to section-only in the app list."
+            )
+        }
 
         val candidates = setOfNotNull(live, lastForegroundPackage)
         for (pkg in candidates) {
@@ -410,6 +499,10 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         private const val FEATURE_BLOCK_LAUNCH_DELAY_MS = 250L
         private const val MAX_FEATURE_NODES_SCANNED = 1500
         private const val TAB_ANCESTOR_DEPTH = 3
+
+        private const val DIAG_TAG = "FocusFeature"
+        private const val DIAG_INTERVAL_MS = 3000L
+        private const val DIAG_MAX_LINES = 120
         // Action words on the final confirm step of each escape route:
         //  uninstall / force stop -> app-info page & uninstall dialog
         //  deactivate             -> device-admin deactivation screen
